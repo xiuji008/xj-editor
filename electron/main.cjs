@@ -707,13 +707,20 @@ ipcMain.handle('dialog:selectImages', async (event) => {
   return { canceled: false, filePaths: result.filePaths }
 })
 
+// 目录树中需要忽略的文件：系统隐藏文件、Office/WPS 打开时生成的临时锁文件
+function isIgnoredEntry(name) {
+  if (name.startsWith('.')) return true
+  if (name.startsWith('~$')) return true
+  return false
+}
+
 // 读取目录（单层）
 ipcMain.handle('dir:read', async (_event, { dirPath }) => {
   try {
     const entries = await fsp.readdir(dirPath, { withFileTypes: true })
     const children = []
     for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue // 跳过隐藏文件
+      if (isIgnoredEntry(entry.name)) continue // 跳过隐藏文件与 ~$ 临时文件
       const full = path.join(dirPath, entry.name)
       let size = 0
       let mtime = 0
