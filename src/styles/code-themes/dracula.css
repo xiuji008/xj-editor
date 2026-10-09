@@ -1,0 +1,73 @@
+pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em
+}
+code.hljs {
+  padding: 3px 5px
+}
+/*!
+ * Dracula Theme for highlight.js
+ * https://draculatheme.com
+ * Based on the Dracula color palette
+ */
+.hljs-comment,
+.hljs-quote {
+  color: #6272a4
+}
+.hljs-keyword,
+.hljs-selector-tag {
+  color: #ff79c6
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+  color: #f1fa8c
+}
+.hljs-number,
+.hljs-literal {
+  color: #bd93f9
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #8be9fd
+}
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-attribute {
+  color: #50fa7b
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-template-tag {
+  color: #f8f8f2
+}
+.hljs-tag {
+  color: #ff79c6
+}
+.hljs-deletion {
+  color: #ff5555
+}
+.hljs-meta {
+  color: #6272a4
+}
+.hljs-link {
+  color: #8be9fd
+}
+.hljs-emphasis {
+  font-style: italic
+}
+.hljs-strong {
+  font-weight: bold
+}
+.hljs {
+  background: #282a36;
+  color: #f8f8f2
+}

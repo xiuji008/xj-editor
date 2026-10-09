@@ -1,0 +1,108 @@
+{
+  "name": "markdown-desktop",
+  "version": "1.0.0",
+  "description": "独立 Markdown 编辑器桌面应用（基于 myhub 知识库编辑器）",
+  "private": true,
+  "main": "electron/main.cjs",
+  "author": "myhub",
+  "license": "MIT",
+  "scripts": {
+    "pdf:assets": "node scripts/copy-pdf-assets.cjs",
+    "dev": "npm run pdf:assets && vite",
+    "dev:electron": "concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "npm run pdf:assets && vite build",
+    "dist": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
+    "dist:dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@firecrawl/anydoc-wasm": "^0.2.4",
+    "@open-file-viewer/core": "^0.1.42",
+    "@open-file-viewer/vue": "^0.1.42",
+    "chart.js": "^4.5.1",
+    "element-plus": "^2.9.7",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.17.0",
+    "marked": "^18.0.6",
+    "mermaid": "^11.16.0",
+    "pako": "^2.1.0",
+    "pdfjs-dist": "^6.3.289",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.1",
+    "@vitejs/plugin-vue": "^5.2.3",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.3",
+    "vite": "^6.2.6",
+    "vue-tsc": "^2.2.8",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.myhub.markdown",
+    "productName": "Markdown编辑器",
+    "directories": {
+      "output": "release_app"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown Document",
+        "description": "Markdown 文档",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": "markdown",
+        "name": "Markdown Document",
+        "description": "Markdown 文档",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": "mdown",
+        "name": "Markdown Document",
+        "description": "Markdown 文档",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      },
+      {
+        "ext": "mkd",
+        "name": "Markdown Document",
+        "description": "Markdown 文档",
+        "mimeType": "text/markdown",
+        "role": "Editor"
+      }
+    ],
+    "afterPack": "scripts/after-pack.cjs",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "XJ-Editor",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    }
+  }
+}

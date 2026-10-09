@@ -1,0 +1,66 @@
+pre code.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em
+}
+code.hljs {
+  padding: 3px 5px
+}
+/*
+  Solarized Dark theme for highlight.js
+  Based on Solarized by Ethan Schoonover
+  http://ethanschoonover.com/solarized
+*/
+.hljs-comment,
+.hljs-quote {
+  color: #586e75
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-addition {
+  color: #859900
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-bullet {
+  color: #2aa198
+}
+.hljs-number,
+.hljs-literal {
+  color: #d33682
+}
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: #268bd2
+}
+.hljs-type,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-attribute {
+  color: #b58900
+}
+.hljs-variable,
+.hljs-template-variable,
+.hljs-template-tag,
+.hljs-meta,
+.hljs-link {
+  color: #93a1a1
+}
+.hljs-tag,
+.hljs-deletion {
+  color: #dc322f
+}
+.hljs-emphasis {
+  font-style: italic
+}
+.hljs-strong {
+  font-weight: bold
+}
+.hljs {
+  background: #002b36;
+  color: #839496
+}
