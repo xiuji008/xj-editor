@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { ElMessage, ElMessageBox, ElTree } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading, ElTree } from 'element-plus'
 import {
   Plus,
   FolderOpened,
@@ -70,6 +70,7 @@ import {
   setFrontMatterTitle,
 } from './utils/markdown'
 import { applyAiMetadata } from './utils/metadata'
+import { exportMarkdownToDocx, type DocxExportResult } from './utils/docxExport'
 import { basename, dirname, extname, classifyFile, type FileKind } from './utils/fileUtils'
 import FileIcon from './components/FileIcon.vue'
 import { vOverflowTip } from './utils/overflowTip'
@@ -1166,6 +1167,136 @@ ${bodyHtml}
 </div>
 </body>
 </html>`
+}
+
+/* ========== 导出 Word（.docx） ========== */
+/** 导出中标记，避免重复点击（图表渲染 + 图片编码可能耗时数秒） */
+const exportingDocx = ref(false)
+
+/**
+ * 生成 docx 字节（离屏渲染 + 图表/图片编码），带全屏进度遮罩。
+ * 失败时提示并返回 null；调用方负责落盘与结果提示。
+ */
+async function generateDocx(loadingText: string): Promise<DocxExportResult | null> {
+  let loading: ReturnType<typeof ElLoading.service> | null = null
+  try {
+    loading = ElLoading.service({ lock: true, text: loadingText, background: 'rgba(0, 0, 0, 0.3)' })
+    const result = await exportMarkdownToDocx({
+      markdown: content.value,
+      baseName: fileName.value,
+      baseDir: currentDir.value,
+      codeTheme: codeTheme.value,
+      onProgress: (text) => loading?.setText(text),
+    })
+    loading.close()
+    loading = null
+    return result
+  } catch (err) {
+    ElMessage.error(`生成失败：${err instanceof Error ? err.message : String(err)}`)
+    return null
+  } finally {
+    loading?.close()
+  }
+}
+
+/** Word 生成结果提示：无降级项报成功，有降级项黄色列出 */
+function notifyDocxResult(result: DocxExportResult, successText: string): void {
+  if (!result.warnings.length) {
+    ElMessage.success(successText)
+    return
+  }
+  ElMessage({
+    type: 'warning',
+    duration: 6000,
+    showClose: true,
+    dangerouslyUseHTMLString: true,
+    message: `${successText}，但有 ${result.warnings.length} 项降级：<br>${result.warnings
+      .slice(0, 5)
+      .map((w) => `• ${escapeHtmlText(w)}`)
+      .join('<br>')}`,
+  })
+}
+
+/** 提示信息里转义用户内容（文件名等可能含尖括号） */
+function escapeHtmlText(text: string): string {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/** 工具栏「导出 Word」：弹保存对话框，由用户选择位置 */
+async function exportDocx() {
+  if (!window.mdAPI) {
+    ElMessage.warning('此功能仅在桌面版可用')
+    return
+  }
+  if (exportingDocx.value) return
+  exportingDocx.value = true
+  try {
+    const result = await generateDocx('正在导出 Word…')
+    if (!result) return
+    const res = await window.mdAPI.exportDocx({
+      data: result.data,
+      defaultPath: fileName.value.replace(/\.(md|markdown)$/i, '') + '.docx',
+    })
+    if (res.canceled) return
+    if (res.error) {
+      ElMessage.error(`导出失败：${res.error}`)
+      return
+    }
+    if (res.filePath) refreshTreeDir(dirname(res.filePath))
+    notifyDocxResult(result, '已导出 Word')
+  } finally {
+    exportingDocx.value = false
+  }
+}
+
+/**
+ * 编辑器工具栏「转Word」：不弹对话框，直接在当前 md 同级目录生成同名 .docx。
+ * 目标文件已存在时先确认覆盖，避免静默覆盖用户已有文件。
+ */
+async function convertToDocxInPlace() {
+  if (!window.mdAPI) {
+    ElMessage.warning('此功能仅在桌面版可用')
+    return
+  }
+  if (isScratchFile.value) {
+    ElMessage.warning('暂存区为内置文件，请先「另存为」到本地再转换')
+    return
+  }
+  if (!currentPath.value || !currentDir.value) {
+    ElMessage.warning('请先保存文件，再转换为 Word')
+    return
+  }
+  if (exportingDocx.value) return
+  exportingDocx.value = true
+  try {
+    const result = await generateDocx('正在转换为 Word…')
+    if (!result) return
+    const target = joinPath(currentDir.value, fileName.value.replace(/\.(md|markdown)$/i, '') + '.docx')
+    let res = await window.mdAPI.writeBinary({ filePath: target, data: result.data })
+    if (!res.ok && res.needConfirm) {
+      try {
+        await ElMessageBox.confirm(
+          `「${basename(target)}」已存在，是否覆盖？`,
+          '文件已存在',
+          { type: 'warning', confirmButtonText: '覆盖', cancelButtonText: '取消' },
+        )
+      } catch {
+        return
+      }
+      res = await window.mdAPI.writeBinary({ filePath: target, data: result.data, overwrite: true })
+    }
+    if (!res.ok) {
+      ElMessage.error(`转换失败：${res.error || '写入失败'}`)
+      return
+    }
+    refreshTreeDir(currentDir.value)
+    notifyDocxResult(result, `已生成 ${basename(target)}`)
+  } finally {
+    exportingDocx.value = false
+  }
 }
 
 async function exportHtml() {
@@ -2362,6 +2493,14 @@ const viewOptions = [
           <el-tooltip content="导出 HTML" placement="bottom">
             <el-button :icon="Download" :disabled="activeFileType !== 'markdown'" @click="exportHtml" />
           </el-tooltip>
+          <el-tooltip content="导出 Word（.docx）" placement="bottom">
+            <el-button
+              :icon="Files"
+              :disabled="activeFileType !== 'markdown'"
+              :loading="exportingDocx"
+              @click="exportDocx"
+            />
+          </el-tooltip>
           <el-tooltip :content="scratchTip" placement="bottom">
             <el-button :icon="Notebook" :type="isScratchFile ? 'primary' : ''" @click="openScratch" />
           </el-tooltip>
@@ -2619,6 +2758,7 @@ const viewOptions = [
             @file-saved="onFileSavedExternally"
             @ask-ai="onAskAi"
             @generate-diagram="onGenerateDiagram"
+            @export-docx="convertToDocxInPlace"
           />
         </div>
 

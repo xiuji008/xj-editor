@@ -290,12 +290,30 @@ function injectLineAttr(html: string, line: number): string {
   return html.slice(0, start) + newTag + html.slice(end + 1)
 }
 
+/**
+ * 公式输出模式：
+ * - html：只输出 KaTeX 的 HTML（预览用，体积小）
+ * - htmlAndMathml：额外输出 MathML。MathML 里的 `<annotation encoding="application/x-tex">`
+ *   保留了 LaTeX 源码，导出 Word 时用它把公式还原为文本（P1 进一步转成 Word 公式）。
+ */
+let mathOutputMode: 'html' | 'htmlAndMathml' = 'html'
+
+/**
+ * 设置公式输出模式，返回设置前的模式（便于调用方用完恢复）。
+ * @param mode html 仅 HTML / htmlAndMathml 含 MathML
+ */
+export function setMathOutputMode(mode: 'html' | 'htmlAndMathml'): 'html' | 'htmlAndMathml' {
+  const prev = mathOutputMode
+  mathOutputMode = mode
+  return prev
+}
+
 function renderKatex(formula: string, displayMode: boolean): string {
   try {
     return katex.renderToString(formula, {
       displayMode,
       throwOnError: false,
-      output: 'html',
+      output: mathOutputMode,
     })
   } catch {
     return `<span style="color:#f56c6c">公式渲染失败: ${escapeHtml(formula)}</span>`

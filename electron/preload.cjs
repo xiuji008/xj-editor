@@ -76,6 +76,15 @@ contextBridge.exposeInMainWorld('mdAPI', {
   saveFile: ({ filePath, content }) => ipcRenderer.invoke('dialog:save', { filePath, content }),
   saveAs: ({ content, defaultPath, filters }) => ipcRenderer.invoke('dialog:saveAs', { content, defaultPath, filters }),
   exportHtml: ({ html, defaultPath }) => ipcRenderer.invoke('dialog:exportHtml', { html, defaultPath }),
+  // 导出 Word：data 为渲染进程生成的 docx 二进制（Uint8Array，结构化克隆传输）
+  exportDocx: ({ data, defaultPath }) => ipcRenderer.invoke('dialog:exportDocx', { data, defaultPath }),
+  // 读取本地文件二进制（导出 Word 嵌入本地图片用）
+  readBinary: (filePath) => ipcRenderer.invoke('file:readBinary', { filePath }),
+  // 静默写入二进制文件（不弹对话框）：目标已存在且未允许覆盖时返回 needConfirm
+  writeBinary: ({ filePath, data, overwrite }) =>
+    ipcRenderer.invoke('file:writeBinary', { filePath, data, overwrite }),
+  // 下载远程资源为二进制（图床 / PlantUML 图片，绕开渲染进程 CORS）
+  fetchBinary: (payload) => ipcRenderer.invoke('net:fetchBinary', payload || {}),
   convertToMarkdown: (filePath, imageConfig) =>
     ipcRenderer.invoke('file:convertToMarkdown', { filePath, imageConfig }),
   // 文件管理（目录树增删改）

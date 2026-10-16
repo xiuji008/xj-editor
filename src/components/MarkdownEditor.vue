@@ -318,6 +318,8 @@ const emit = defineEmits<{
   (e: 'ask-ai', text: string): void
   /** 点击"生成图表"按钮：以选中的源码文本作为描述，交由父组件生成图表代码 */
   (e: 'generate-diagram', text: string): void
+  /** 点击工具栏"转Word"：交由父组件把当前文档转成 .docx 并写入同级目录 */
+  (e: 'export-docx'): void
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -820,6 +822,12 @@ const inlineItems: ToolbarItem[] = [
   { key: 'link', label: '链接', title: '链接', action: insertLink },
   { key: 'table', label: '表格', title: '插入表格', action: insertTable },
   { key: 'image', label: '图片', title: '插入图片', action: insertImage },
+  {
+    key: 'docx',
+    label: '转Word',
+    title: '转换为 Word 文档（.docx），保存到当前文件同级目录',
+    action: () => emit('export-docx'),
+  },
 ]
 
 // 高级按钮：始终收入"更多"下拉（提示块单独处理为可选用类型的子菜单）

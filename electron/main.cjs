@@ -856,6 +856,71 @@ ipcMain.handle('dialog:exportHtml', async (event, { html, defaultPath }) => {
   return { canceled: false, filePath: result.filePath }
 })
 
+// 导出 Word（.docx）：二进制由渲染进程生成（docx 库），主进程只负责落盘
+ipcMain.handle('dialog:exportDocx', async (event, { data, defaultPath }) => {
+  const result = await dialog.showSaveDialog(winOfEvent(event), {
+    title: '导出为 Word',
+    defaultPath: defaultPath || '未命名.docx',
+    filters: [{ name: 'Word 文档', extensions: ['docx'] }],
+  })
+  if (result.canceled || !result.filePath) return { canceled: true }
+  try {
+    const buf = Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data || []))
+    fs.writeFileSync(result.filePath, buf)
+    return { canceled: false, filePath: result.filePath }
+  } catch (err) {
+    return { canceled: false, error: err.message }
+  }
+})
+
+/**
+ * 静默写入二进制文件（不弹对话框），用于「转 Word」直接落到 md 同级目录。
+ * 目标已存在且未显式允许覆盖时返回 needConfirm，由渲染进程询问用户后再写一次。
+ */
+ipcMain.handle('file:writeBinary', async (_event, { filePath, data, overwrite }) => {
+  try {
+    const target = String(filePath || '')
+    if (!target) return { ok: false, error: '路径为空' }
+    if (fs.existsSync(target) && !overwrite) {
+      return { ok: false, needConfirm: true, filePath: target }
+    }
+    const buf = Buffer.from(data instanceof Uint8Array ? data : new Uint8Array(data || []))
+    await fsp.writeFile(target, buf)
+    return { ok: true, filePath: target }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// 读取本地文件的二进制内容（导出 Word 时嵌入本地图片用）
+ipcMain.handle('file:readBinary', async (_event, { filePath }) => {
+  try {
+    const buf = await fsp.readFile(String(filePath || ''))
+    return { ok: true, data: new Uint8Array(buf) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+})
+
+// 下载远程资源为二进制（图床 / PlantUML 图片等；走主进程可绕开渲染进程 CORS 限制）
+ipcMain.handle('net:fetchBinary', async (_event, { url, timeout }) => {
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), Number(timeout) || 10000)
+    let res
+    try {
+      res = await net.fetch(url, { signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (!res.ok) return { ok: false, error: `下载失败（HTTP ${res.status}）` }
+    const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+    return { ok: true, data: new Uint8Array(await res.arrayBuffer()), contentType }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) }
+  }
+})
+
 // 一键转换：将 Office / PDF / RTF / EPUB / ODT / CSV 等文档转为 Markdown 文件
 // imageConfig 为渲染进程的图片配置（type: none/picgo/custom），用于按配置处理嵌入图片
 ipcMain.handle('file:convertToMarkdown', async (_event, { filePath, imageConfig }) => {

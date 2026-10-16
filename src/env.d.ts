@@ -76,6 +76,24 @@ interface MdAPI {
     filters?: Array<{ name: string; extensions: string[] }>
   }) => Promise<{ canceled: boolean; filePath?: string }>
   exportHtml: (args: { html: string; defaultPath?: string }) => Promise<{ canceled: boolean; filePath?: string }>
+  /** 导出 Word：data 为渲染进程生成的 docx 二进制 */
+  exportDocx: (args: {
+    data: Uint8Array
+    defaultPath?: string
+  }) => Promise<{ canceled: boolean; filePath?: string; error?: string }>
+  /** 静默写入二进制文件；目标已存在且未允许覆盖时返回 needConfirm: true */
+  writeBinary: (args: {
+    filePath: string
+    data: Uint8Array
+    overwrite?: boolean
+  }) => Promise<{ ok: boolean; filePath?: string; needConfirm?: boolean; error?: string }>
+  /** 读取本地文件二进制（导出 Word 嵌入本地图片用） */
+  readBinary: (filePath: string) => Promise<{ ok: boolean; data?: Uint8Array; error?: string }>
+  /** 下载远程资源为二进制（图床 / PlantUML 图片，绕开渲染进程 CORS） */
+  fetchBinary: (args: {
+    url: string
+    timeout?: number
+  }) => Promise<{ ok: boolean; data?: Uint8Array; contentType?: string; error?: string }>
   convertToMarkdown: (
     filePath: string,
     imageConfig?: {
