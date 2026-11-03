@@ -20,6 +20,7 @@ import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import pako from 'pako'
 import { getPlantUmlRenderUrl } from './plantUmlConfig'
+import { runScript } from './scriptRunner'
 import hljs from 'highlight.js/lib/common'
 // 代码高亮主题 CSS（?inline 导入为字符串，按需动态注入）
 import githubDarkCss from '../styles/code-themes/github-dark.css?inline'
@@ -822,6 +823,13 @@ const COPY_ICON_SVG =
 const DOWNLOAD_ICON_SVG =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>'
 
+/** 运行按钮图标（feather play，实心三角形） */
+const RUN_ICON_SVG =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>'
+
+/** 可运行脚本的语言标识（代码块标注 ```js 等语言时显示「运行」按钮） */
+const RUNNABLE_JS_LANGS = new Set(['js', 'javascript', 'mjs', 'cjs', 'node', 'nodejs'])
+
 /**
  * 根据代码块语言标识推断导出文件的扩展名。
  * 未收录的语言（含未标注语言的 ```）统一回退为 txt。
@@ -937,6 +945,23 @@ function bindCodeDownloadDelegation(): void {
 }
 bindCodeDownloadDelegation()
 
+/**
+ * 在 document 上注册一次「运行代码块」事件委托：
+ * 点击 ```js 代码块的「运行」按钮时，把代码交给主进程以 Node 子进程执行，
+ * 输出到「脚本输出」面板。工作目录取代码块所属文档所在目录（由 enhanceRenderedDom 写入 data-run-cwd）。
+ */
+function bindCodeRunDelegation(): void {
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null
+    const btn = target?.closest?.('.code-run-btn') as HTMLButtonElement | null
+    if (!btn || !btn.dataset.runCode) return
+    const code = decodeURIComponent(btn.dataset.runCode)
+    const cwd = btn.dataset.runCwd || ''
+    void runScript({ code, cwd })
+  })
+}
+bindCodeRunDelegation()
+
 // ============================================================
 // 5. 代码块扩展
 //
@@ -955,6 +980,13 @@ const codeRenderer: RendererExtension = {
     const langLabel = lang || 'text'
     const ext = getCodeFileExt(lang)
     const codeHtml = escapeHtml(text)
+    // 可运行脚本（js / javascript / mjs / cjs / node）额外提供「运行」按钮
+    const runBtn = RUNNABLE_JS_LANGS.has(lang)
+      ? `<button class="code-run-btn" type="button" title="运行脚本（Node）" data-run-code="${encodeURIComponent(text)}">
+          ${RUN_ICON_SVG}
+          <span>运行</span>
+        </button>`
+      : ''
     // 所有代码块统一渲染为 <pre><code>，在 DOM 增强阶段再根据 lang 处理
     return `<div class="code-block-wrapper" data-lang="${escapeHtml(lang)}">
       <div class="code-block-header">
@@ -968,6 +1000,7 @@ const codeRenderer: RendererExtension = {
             ${DOWNLOAD_ICON_SVG}
             <span>下载</span>
           </button>
+          ${runBtn}
         </div>
       </div>
       <pre><code class="language-${escapeHtml(lang)}">${codeHtml}</code></pre>
@@ -1108,8 +1141,9 @@ function appendDiagramHeader(container: HTMLElement, langLabel: string, source: 
  *
  * @param container 包含渲染后 HTML 的容器元素
  * @param baseName 当前文档名（如 笔记.md），用于生成代码块导出时的默认文件名
+ * @param cwd 当前文档所在目录，作为 ```js 代码块「运行」时的工作目录
  */
-export async function enhanceRenderedDom(container: HTMLElement, baseName?: string): Promise<void> {
+export async function enhanceRenderedDom(container: HTMLElement, baseName?: string, cwd?: string): Promise<void> {
   // --- 第一步：扫描 code-block-wrapper，按 data-lang 转换特殊代码块 ---
   const codeWrappers = container.querySelectorAll<HTMLElement>('.code-block-wrapper')
   for (const wrapper of Array.from(codeWrappers)) {
@@ -1307,6 +1341,13 @@ export async function enhanceRenderedDom(container: HTMLElement, baseName?: stri
     // 默认文件名：文档名 + 代码块序号 + 语言扩展名（如 笔记.py、笔记-2.sql）
     btn.dataset.downloadName = buildCodeFileName(btn.dataset.downloadLang || '', baseName, idx + 1)
   })
+
+  // --- 代码块运行按钮：写入文档所在目录，作为脚本执行时的工作目录 ---
+  for (const btn of Array.from(container.querySelectorAll<HTMLButtonElement>('.code-run-btn'))) {
+    if (enhancedSet.has(btn)) continue
+    enhancedSet.add(btn)
+    btn.dataset.runCwd = cwd || ''
+  }
 }
 
 /**
@@ -1507,7 +1548,8 @@ export function getMarkdownExtensionStyles(): string {
   gap: 6px;
 }
 .code-block-wrapper .code-copy-btn,
-.code-block-wrapper .code-download-btn {
+.code-block-wrapper .code-download-btn,
+.code-block-wrapper .code-run-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1522,10 +1564,21 @@ export function getMarkdownExtensionStyles(): string {
   font-family: inherit;
 }
 .code-block-wrapper .code-copy-btn:hover,
-.code-block-wrapper .code-download-btn:hover {
+.code-block-wrapper .code-download-btn:hover,
+.code-block-wrapper .code-run-btn:hover {
   background: #3a3a3a;
   color: #fff;
   border-color: #555;
+}
+/* 运行按钮用绿色强调，突出「可执行」语义 */
+.code-block-wrapper .code-run-btn {
+  color: #67c23a;
+  border-color: rgba(103, 194, 58, 0.5);
+}
+.code-block-wrapper .code-run-btn:hover {
+  background: rgba(103, 194, 58, 0.15);
+  color: #67c23a;
+  border-color: #67c23a;
 }
 .code-block-wrapper .code-copy-btn.copied,
 .code-block-wrapper .code-download-btn.copied {

@@ -504,8 +504,9 @@ const refreshPreview = async () => {
   await nextTick()
   if (previewRef.value) {
     try {
-      // 传入文档名，使代码块「下载」按钮的默认文件名形如 笔记.py / 笔记-2.sql
-      await enhanceRenderedDom(previewRef.value, props.fileName)
+      // 传入文档名，使代码块「下载」按钮的默认文件名形如 笔记.py / 笔记-2.sql；
+      // 同时传入文档所在目录，作为 ```js 代码块「运行」时的工作目录
+      await enhanceRenderedDom(previewRef.value, props.fileName, props.imageBaseDir || '')
     } catch (e) {
       // enhance 失败不影响基本预览
     }

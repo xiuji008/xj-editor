@@ -7,6 +7,7 @@ const { pathToFileURL } = require('url')
 const fileassoc = require('./fileassoc.cjs')
 const docConvert = require('./docConvert.cjs')
 const terminal = require('./terminal.cjs')
+const scriptRunner = require('./script.cjs')
 
 /** 独立的「AI 对话」窗口（与主窗口共享会话数据，最多一个） */
 let aiChatWindow = null
@@ -113,6 +114,19 @@ function sendTerminalEvent(channel, payload, ownerId) {
   if (win && !win.webContents.isDestroyed()) win.webContents.send(channel, payload)
 }
 terminal.setEventSender(sendTerminalEvent)
+
+/**
+ * 脚本运行事件转发：把脚本输出 / 退出事件推送给创建该会话的窗口
+ * @param {string} channel 事件通道
+ * @param {object} payload 事件数据
+ * @param {number | null} ownerId 归属窗口 id
+ */
+function sendScriptEvent(channel, payload, ownerId) {
+  const entry = ownerId != null ? windows.get(ownerId) : null
+  const win = entry && isAlive(entry.win) ? entry.win : activeWindow()
+  if (win && !win.webContents.isDestroyed()) win.webContents.send(channel, payload)
+}
+scriptRunner.setEventSender(sendScriptEvent)
 
 /** 待打开的外部文件队列（活动主窗口挂载后通过 app:getStartupFiles 拉取） */
 let pendingOpenFiles = []
@@ -345,6 +359,7 @@ function finishQuit() {
   // 退出前同步落盘完整会话，供下次启动恢复（防抖写入可能还没触发）
   flushWorkspace()
   terminal.killAll()
+  scriptRunner.killAll()
   app.quit()
 }
 
@@ -450,6 +465,8 @@ function createWindow(options = {}) {
     releaseFileOwners(id)
     // 只回收本窗口的终端会话，不影响其它窗口
     terminal.killByOwner(id)
+    // 只回收本窗口的脚本运行会话，不影响其它窗口
+    scriptRunner.killByOwner(id)
     // 摘除本窗口后重新记录会话；退出阶段不重写，否则窗口逐个关闭会把会话缩减成只剩一个
     if (!isQuitting && !quitPending) flushWorkspace()
     // 退出流程中：继续询问下一个仍有未保存修改的窗口
@@ -457,6 +474,7 @@ function createWindow(options = {}) {
     // 所有主窗口都关闭后：兜底清理终端，并关闭独立对话窗口
     if (!countMainWindows()) {
       terminal.killAll()
+      scriptRunner.killAll()
       if (aiChatWindow && !aiChatWindow.isDestroyed()) aiChatWindow.close()
     }
   })
@@ -636,6 +654,7 @@ app.on('before-quit', (e) => {
     isQuitting = true
     flushWorkspace()
     terminal.killAll()
+    scriptRunner.killAll()
     return
   }
   const dirty = mainWindows().filter((en) => en.dirty && !en.closeConfirmed)
@@ -644,6 +663,7 @@ app.on('before-quit', (e) => {
     // 退出前同步落盘完整会话，保证重启能恢复全部窗口
     flushWorkspace()
     terminal.killAll()
+    scriptRunner.killAll()
     return
   }
   e.preventDefault()
@@ -2506,6 +2526,22 @@ ipcMain.handle('terminal:externalList', () => terminal.listExternalTerminals())
 ipcMain.handle('terminal:openExternal', async (_event, payload = {}) =>
   terminal.openExternalTerminal(payload),
 )
+
+/* ==================== IPC：JS 脚本运行（运行 .js 文件 / 代码片段） ==================== */
+
+// 运行脚本：filePath 直接执行文件，code 执行代码片段；ownerId 标记归属窗口
+ipcMain.handle('script:run', async (event, payload = {}) =>
+  scriptRunner.run({ ...payload, ownerId: entryOfEvent(event)?.id ?? null }),
+)
+
+// 停止指定脚本
+ipcMain.handle('script:kill', async (_event, id) => scriptRunner.kill(id))
+
+// 停止本窗口创建的全部脚本（多窗口下不影响其它窗口）
+ipcMain.handle('script:killOwn', (event) => scriptRunner.killByOwner(entryOfEvent(event)?.id ?? null))
+
+// 停止全部脚本（应用退出时调用）
+ipcMain.handle('script:killAll', () => scriptRunner.killAll())
 
 /* ==================== IPC：进程管理（按端口 / 服务名查进程并结束） ==================== */
 const processManager = require('./process.cjs')

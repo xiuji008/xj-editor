@@ -24,7 +24,7 @@
 | **Markdown** | 源码编辑 + 实时预览，支持扩展语法、图表、公式、代码高亮（见下） |
 | **HTML** | 源码编辑 + iframe 实时预览，本地相对资源自动解析，可手动重新加载脚本 |
 | **JSON** | 源码编辑 + 所见即所得树形视图，双向同步、格式化/压缩、实时有效性校验 |
-| **文本** | 纯文本编辑（txt / sql / xml 等），实时行数/字符统计 |
+| **文本** | 纯文本编辑（txt / sql / xml 等），实时行数/字符统计；`.js / .mjs / .cjs` 额外提供「运行」按钮 |
 | **图片** | png / jpg / jpeg / gif / webp / svg / bmp / ico / avif 预览 |
 | **PDF** | 内置阅读器：页码跳转 / 缩放 / 适应宽度与整页 / 高亮标注 / 批注面板 / 阅读进度与笔记，基于 pdf.js 本地渲染 |
 | **Office** | doc / docx / xls / xlsx / ppt / pptx 预览，旧版 .doc 自适应缩放 |
@@ -36,6 +36,7 @@ Markdown / HTML / JSON 均支持**编辑 / 分屏 / 预览**三种视图模式�
 
 - **完整语法**：标题、列表、表格、引用、任务列表、脚注、删除线等
 - **代码高亮**：12 种主题（GitHub Dark/Light、Dracula、Monokai、Nord、Atom、Xcode、VS、Solarized 等），代码块带语言标签栏、一键复制与一键下载（按语言导出为对应类型文件，如 `js`→`.js`、`python`→`.py`、`mermaid`→`.mmd`，未识别语言默认 `.txt`）
+- **运行脚本**：` ```js`（含 `javascript / mjs / cjs / node`）代码块右上角显示「运行」按钮，点击后在底部「脚本输出」面板用 Node 执行并回显结果（无需安装 Node，见「运行脚本」章节）
 - **Mermaid 图表**：流程图、时序图、甘特图等（支持 `sequence` 时序图别名）
 - **PlantUML 图表**：默认官方在线服务，可配置为私有化部署地址，支持 SVG / PNG
 - **Chart.js 图表**：极简 JSON 语法即可绘制 pie / bar / line / area / radar / doughnut，也支持完整原生配置
@@ -205,6 +206,18 @@ Office / PDF / RTF / EPUB / ODT / CSV 文档可在**本地**一键转换为 Mark
 >
 > 面板接入真实 PTY（node-pty + xterm.js）的改造路线、验收标准与分阶段回滚方案见 `docs/内置终端接入PTY改造方案.md`。
 
+### 运行脚本（JS）
+
+编辑器内置 JS 脚本运行能力，两个入口共享同一个「脚本输出」底部面板：
+
+- **运行 `.js` 文件**：打开 `.js / .mjs / .cjs` 文件后，顶部工具栏出现绿色「运行」按钮；点击执行当前脚本（有未保存改动会先保存），标准输出 / 标准错误实时回显到面板，结束显示退出码
+- **运行 ` ```js` 代码块**：Markdown 预览中，`js / javascript / mjs / cjs / node` 代码块右上角显示「运行」按钮，点击即以代码块内容运行，工作目录为文档所在目录
+- **输出面板**：底部「脚本输出」面板按标准输出（普通色）/ 标准错误（红色）/ 系统提示（灰色）区分，支持清空、停止运行、关闭；运行中显示状态，结束显示退出码（非 0 为红色）
+- **无需安装 Node**：主进程优先使用系统 `node`（错误栈更友好），未安装时自动退回 Electron 内置 Node（`ELECTRON_RUN_AS_NODE`），打包后依然可用
+- **保护措施**：默认 60 秒超时自动终止、输出累计 5 MB 上限截断、进程树清理、Windows 中文输出按 UTF-8 / GB18030 自动识别
+
+> 说明：脚本运行在主进程 `electron/script.cjs` 中通过 `child_process` 启动 Node 子进程完成，输出经 `window.mdAPI.script` 流式回传（`contextIsolation` 下不暴露 Node 能力给渲染进程，仅 IPC 通道）。任意代码执行仅在用户主动点击「运行」时触发，绝不自动执行。
+
 ### 工具集
 
 工具栏「工具集」按钮或 `Ctrl+Alt+T` 打开右侧抽屉（可全屏），内置常用开发小工具：
@@ -261,6 +274,7 @@ xj-editor/
 │   ├── commitSpec.cjs        # Git 提交规范配置（AI 生成提交信息）
 │   ├── fileassoc.cjs         # Windows 文件关联
 │   ├── terminal.cjs          # 内置终端（管道 shell）与系统外部终端探测
+│   ├── script.cjs            # JS 脚本运行（Node 子进程，运行 .js 文件 / ```js 代码块）
 │   └── preload.cjs           # 渲染进程桥接层（window.mdAPI）
 ├── src/
 │   ├── components/
@@ -278,6 +292,7 @@ xj-editor/
 │   │   ├── TerminalPanel.vue     # 底部终端面板（多标签 / 高度可调）
 │   │   ├── TerminalView.vue      # 单个终端视图（输出渲染 / 命令输入）
 │   │   ├── TerminalIcon.vue      # 终端图标
+│   │   ├── ScriptOutputPanel.vue # 脚本输出面板（.js 文件 / ```js 代码块运行结果）
 │   │   ├── PdfExportDialog.vue   # 导出 PDF 版面设置（纸张 / 方向 / 边距 / 缩放 / 页码）
 │   │   ├── pdf/                  # PDF 阅读器（pdf.js）
 │   │   │   ├── PdfViewer.vue     # 阅读器外壳（页码 / 缩放 / 高亮标注 / 批注）
@@ -320,6 +335,7 @@ xj-editor/
 │   │   ├── pdfNotes.ts           # PDF 标注与笔记（sidecar 落盘）
 │   │   ├── pdfAi.ts              # PDF AI 笔记生成
 │   │   ├── terminal.ts           # 终端行缓冲（ANSI 解析）与提示符计算
+│   │   ├── scriptRunner.ts       # 脚本运行单例状态（订阅输出 / 面板显隐 / 停止）
 │   │   └── fileUtils.ts          # 路径 / 文件类型 / mdlocal:// 工具
 │   ├── styles/
 │   │   ├── code-themes/          # 12 个代码高亮主题
@@ -451,4 +467,5 @@ npm run dist
 | 单实例 | **requestSingleInstanceLock** | 重复启动时把文件转发给已有窗口并聚焦 |
 | 进程管理 | **process.cjs**（netstat / tasklist / taskkill / PowerShell） | 按端口、服务名、PID 查询并结束进程；PID 先转数字再拼命令，拦截系统关键进程与应用自身 |
 | 外部终端 | **terminal.cjs**（探测 + 分离进程启动） | 在系统终端（Windows Terminal / Ghostty / PowerShell / Git Bash 等）中打开指定目录，拥有完整 TTY |
+| 脚本运行 | **script.cjs**（`child_process` + 内置 Node） | 运行 `.js` 文件 / ` ```js` 代码块，输出经 IPC 流式回传；优先系统 `node`，未安装退回 Electron 内置 Node |
 | 主题 | **Element Plus dark css-vars + 自定义 dark.css** | `<html class="dark">` 驱动 CSS 变量级切换，跟随系统与多窗口同步 |

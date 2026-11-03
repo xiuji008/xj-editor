@@ -33,6 +33,7 @@ import {
   Monitor,
   Moon,
   Sunny,
+  VideoPlay,
 } from '@element-plus/icons-vue'
 import MarkdownEditor from './components/MarkdownEditor.vue'
 import HtmlEditor from './components/HtmlEditor.vue'
@@ -51,6 +52,8 @@ import GitCloneDialog from './components/GitCloneDialog.vue'
 import GitIcon from './components/GitIcon.vue'
 import TerminalPanel from './components/TerminalPanel.vue'
 import TerminalIcon from './components/TerminalIcon.vue'
+import ScriptOutputPanel from './components/ScriptOutputPanel.vue'
+import { runScript } from './utils/scriptRunner'
 import { provideToolContext, ToolLauncher } from './tools'
 import { useTheme } from './composables/useTheme'
 import {
@@ -2657,6 +2660,36 @@ function closeTerminalPanel() {
   terminalPanelVisible.value = false
 }
 
+/* ========== JS 脚本运行 ========== */
+
+/** 当前打开的文件是否是可运行的 JS 脚本（.js / .mjs / .cjs） */
+const isRunnableScript = computed(() => {
+  if (activeFileType.value !== 'text') return false
+  return /\.(m?js|cjs)$/i.test(currentPath.value)
+})
+
+/**
+ * 运行当前打开的 JS 脚本：
+ * 有未保存改动时先保存（保证执行内容与所见一致，且相对 require/import 能正确解析），
+ * 再交给主进程以 Node 子进程执行，输出到「脚本输出」面板。
+ */
+async function runCurrentScript() {
+  if (!window.mdAPI) {
+    ElMessage.warning('此功能仅在桌面版可用')
+    return
+  }
+  if (!currentPath.value) {
+    ElMessage.warning('脚本尚未保存，请先保存文件')
+    return
+  }
+  if (isDirty.value) {
+    await saveFile()
+    // 保存被取消或失败时中止，避免执行到旧内容
+    if (isDirty.value) return
+  }
+  await runScript({ filePath: currentPath.value, cwd: currentDir.value })
+}
+
 /**
  * 右键菜单：在节点所在目录打开命令行
  * @param node 目录树节点（文件则取其所在目录）
@@ -2876,6 +2909,9 @@ const viewOptions = [
           </el-tooltip>
           <el-tooltip content="另存为 (Ctrl+Shift+S)" placement="bottom">
             <el-button :icon="CopyDocument" @click="saveAs" />
+          </el-tooltip>
+          <el-tooltip v-if="isRunnableScript" content="运行脚本（Node）" placement="bottom">
+            <el-button :icon="VideoPlay" type="success" @click="runCurrentScript" />
           </el-tooltip>
           <el-tooltip content="导出 HTML" placement="bottom">
             <el-button :icon="Download" :disabled="activeFileType !== 'markdown'" @click="exportHtml" />
@@ -3244,6 +3280,9 @@ const viewOptions = [
       :default-cwd="terminalCwd"
       @close="closeTerminalPanel"
     />
+
+    <!-- 底部脚本输出面板：.js 文件 / Markdown ```js 代码块运行结果的输出区 -->
+    <ScriptOutputPanel />
 
     <!-- 目录树右键菜单 -->
     <teleport to="body">

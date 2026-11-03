@@ -227,6 +227,24 @@ contextBridge.exposeInMainWorld('mdAPI', {
       return () => ipcRenderer.removeListener('terminal:exit', listener)
     },
   },
+  // JS 脚本运行：运行 .js 文件或代码片段（Markdown ```js 代码块 / .js 文件编辑器）
+  script: {
+    run: (payload) => ipcRenderer.invoke('script:run', payload || {}),
+    kill: (id) => ipcRenderer.invoke('script:kill', id),
+    // 只停止本窗口创建的脚本（多窗口下不影响其它窗口）
+    killOwn: () => ipcRenderer.invoke('script:killOwn'),
+    killAll: () => ipcRenderer.invoke('script:killAll'),
+    onData: (callback) => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('script:data', listener)
+      return () => ipcRenderer.removeListener('script:data', listener)
+    },
+    onExit: (callback) => {
+      const listener = (_event, payload) => callback(payload)
+      ipcRenderer.on('script:exit', listener)
+      return () => ipcRenderer.removeListener('script:exit', listener)
+    },
+  },
   // Git 版本管理（目录为 Git 仓库时可用）
   git: {
     checkAvailable: () => ipcRenderer.invoke('git:checkAvailable'),

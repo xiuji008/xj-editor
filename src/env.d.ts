@@ -224,6 +224,8 @@ interface MdAPI {
   isDebugMode: () => Promise<{ ok: boolean; debug: boolean }>
   // 终端（命令行）
   terminal: TerminalApi
+  // JS 脚本运行（.js 文件 / Markdown ```js 代码块）
+  script: ScriptApi
   // Git 版本管理（打开的目录为 Git 仓库时可用）
   git: GitApi
   // Git 提交规范（内置默认 + 页面可编辑，用于 AI 生成提交信息）
@@ -423,6 +425,59 @@ interface TerminalApi {
   }) => Promise<TerminalCompleteResult>
   onData: (callback: (payload: { id: string; data: string }) => void) => () => void
   onExit: (callback: (payload: { id: string; code: number }) => void) => () => void
+}
+
+/** 脚本运行启动参数 */
+interface ScriptRunPayload {
+  /** 代码片段（与 filePath 二选一；写入临时文件后执行） */
+  code?: string
+  /** 脚本文件路径（与 code 二选一；直接执行） */
+  filePath?: string
+  /** 工作目录（filePath 模式默认取文件所在目录，code 模式默认家目录） */
+  cwd?: string
+  /** 超时时间（毫秒），默认 60000 */
+  timeoutMs?: number
+}
+
+/** 脚本运行启动结果 */
+interface ScriptRunResult {
+  ok: boolean
+  /** 会话 id */
+  id?: string
+  /** 实际工作目录 */
+  cwd?: string
+  error?: string
+}
+
+/** 脚本输出事件负载 */
+interface ScriptDataPayload {
+  /** 会话 id */
+  id: string
+  /** 输出流：stdout 标准输出 / stderr 标准错误 / system 系统提示 */
+  stream: 'stdout' | 'stderr' | 'system'
+  /** 输出文本 */
+  data: string
+}
+
+/** 脚本退出事件负载 */
+interface ScriptExitPayload {
+  /** 会话 id */
+  id: string
+  /** 退出码（-1 表示被主动终止） */
+  code: number
+}
+
+/** JS 脚本运行能力接口（window.mdAPI.script） */
+interface ScriptApi {
+  /** 运行脚本（code 代码片段 或 filePath 文件） */
+  run: (payload: ScriptRunPayload) => Promise<ScriptRunResult>
+  /** 停止指定脚本 */
+  kill: (id: string) => Promise<{ ok: boolean }>
+  /** 只停止本窗口创建的脚本（多窗口下不影响其它窗口） */
+  killOwn: () => Promise<{ ok: boolean; killed?: number }>
+  killAll: () => Promise<{ ok: boolean }>
+  onData: (callback: (payload: ScriptDataPayload) => void) => () => void
+  onExit: (callback: (payload: ScriptExitPayload) => void) => () => void
 }
 
 /** Git 文件状态码（沿用 git porcelain 语义） */
