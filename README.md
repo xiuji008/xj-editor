@@ -1,6 +1,6 @@
 # Markdown 桌面编辑器（XJ-Editor）
 
-一款为「自己」而写的桌面版 Markdown 编辑器，基于 myhub 知识库编辑器独立而来，可在 Windows 上独立运行。
+一款为「自己」而写的桌面版 Markdown 编辑器，可在 Windows 上独立运行。
 
 ## 为什么做这个程序
 
@@ -26,7 +26,7 @@
 | **JSON** | 源码编辑 + 所见即所得树形视图，双向同步、格式化/压缩、实时有效性校验 |
 | **文本** | 纯文本编辑（txt / sql / xml 等），实时行数/字符统计 |
 | **图片** | png / jpg / jpeg / gif / webp / svg / bmp / ico / avif 预览 |
-| **PDF** | 内嵌预览 |
+| **PDF** | 内置阅读器：页码跳转 / 缩放 / 适应宽度与整页 / 高亮标注 / 批注面板 / 阅读进度与笔记，基于 pdf.js 本地渲染 |
 | **Office** | doc / docx / xls / xlsx / ppt / pptx 预览，旧版 .doc 自适应缩放 |
 | **压缩包** | zip / tar / gz / tgz / bz2 / xz 在线浏览包内目录与文件；rar / 7z 显示文件头信息 |
 
@@ -44,6 +44,13 @@ Markdown / HTML / JSON 均支持**编辑 / 分屏 / 预览**三种视图模式�
 - **YAML Front Matter 卡片**：文档头部元信息（标题 / 标签 / 分类 / 描述 / 时间）渲染为信息卡片
 - **图片增强**：`![说明](url)` 自动渲染为带图注（figcaption）的图文
 
+### 界面与外观
+
+- **浅色 / 深色 / 跟随系统**：工具栏太阳 / 月亮按钮一键切换（「设置 → 外观」可改为跟随系统），首屏无闪白、多窗口同步；深色覆盖工具栏、目录树、编辑区、预览、对话框、Git 与终端面板，图表容器与 PDF 纸面保持浅色，导出 HTML / Word 不受主题影响
+- **显示字体**：正文字体（Markdown 预览）与编辑器字体（源码区）分开设置，内置中文常用 / 书法艺术 / 西文 / 等宽四组预设并带实时样例，切换即时生效、重启记忆
+- **预览缩放**：Markdown / HTML 预览支持 25% ~ 500% 缩放（步长 10%），工具栏 `-` / 百分比（点击恢复 100%）/ `+` 操作，`Ctrl + 滚轮` 以预览区中线为锚点缩放，缩放值持久化记忆
+- **代码高亮主题**：12 套主题随时切换，预览与导出 HTML 同步使用
+
 ### 编辑体验
 
 - **目录导航（TOC）**：预览区浮动目录，自动提取 h1–h6，点击平滑滚动，随阅读高亮当前章节
@@ -52,6 +59,10 @@ Markdown / HTML / JSON 均支持**编辑 / 分屏 / 预览**三种视图模式�
 - **智能撤销 / 重做**：自绘历史栈（连续输入合并为一步，工具操作独立一步，上限 200 步），`Ctrl+Z` / `Ctrl+Y` 可靠回退
 - **选中文本浮动按钮**：选中文本即弹出「问 AI」与「生成图表」入口，一键带入 AI 助手提问或按描述生成图表代码
 - **工具栏自适应**：按钮空间不足时自动收进「更多」下拉；常用模板（标题 / 列表 / 代码块 / 链接 / 表格 / 图表 / 公式 / 提示块）一键插入
+- **插入链接弹窗**：分别填写跳转链接与展示文本，链接缺协议时自动补 `https://`，未选文本时以链接地址作为展示文本
+- **预览链接外开**：预览中的 `http(s)` / `mailto:` / `tel:` 链接交给系统默认浏览器打开，不会把应用窗口导航走；指向本地文件的链接仍在应用内打开
+- **粘贴图片反馈**：粘贴图片后在粘贴位置显示「图片上传中…」（多图时显示数量），上传完成或失败自动移除，滚动时跟随并滚出可视区后隐藏
+- **大文件保护**：超过 2 MB 的纯文本（txt / sql / log 等）只读预览前 512 K 个字符，避免原生 textarea 一次性布局超大文本卡死；此类文件禁止就地保存，可改用「用系统默认程序打开」
 
 ### 文档元数据（YAML Front Matter）
 
@@ -142,13 +153,33 @@ Office / PDF / RTF / EPUB / ODT / CSV 文档可在**本地**一键转换为 Mark
 - **未保存标记**：标题与文件名处醒目标识，切换/关闭前有保存确认
 - **内置暂存区**：安装目录（不可写时回退到应用数据目录）下的固定文件 `暂存区.md`，用于临时拷贝 / 暂存信息；**不在左侧目录树中展示**，点击工具栏「暂存区」按钮一键打开，内容自动保存，可一键清空
 
+### 导出 Word
+
+- **两个入口**：工具栏「导出 Word（.docx）」（仅 Markdown 文件，另选保存位置）与编辑器工具栏「转 Word」（直接在同目录生成同名 `.docx`，已存在时先确认覆盖）
+- **原生结构**：复用 Markdown 渲染管线生成富 HTML，再转成 Word 原生段落 / 表格（标题、列表、表格、引用、代码块保留主题配色、图片、Front Matter 信息卡）
+- **图表与图片**：Mermaid / Chart 图表由 DOM 编码为图片嵌入，本地图片按 A4 正文宽度降采样，避免 docx 体积过大
+- **本地完成**：整个转换在渲染进程内完成，不联网、不上传文件；无法转换的元素（如图片路径失效）会在导出后汇总提示
+
+### 导出 PDF
+
+工具栏「打印机」按钮可把当前文档导出为**矢量 PDF**（文字可选中、可搜索，非截图），导出前弹出设置对话框：
+
+- **支持格式**：Markdown、HTML、JSON、纯文本、图片（一图一页、等比居中）、Word（仅 `.docx`）；`.doc` / Excel / PPT 暂不支持
+- **版面设置**：A3 / A4 / A5 / Letter / 自定义毫米尺寸、纵向或横向、页边距（8 / 14 / 20 / 25 mm）、内容缩放（75% ~ 200%）、页脚「第 N 页 / 共 M 页」开关；选择记入 `localStorage`，下次沿用
+- **内容保真**：Markdown 复用预览渲染管线（Mermaid 为矢量图、Chart.js 图表、KaTeX 公式、代码高亮与主题配色一并保留）；KaTeX 字体内联为 data URL，避免临时打印页加载不到字体
+- **实现方式**：渲染进程生成打印用 HTML（或直接给出源文件路径），主进程用隐藏窗口的 Chromium `printToPDF` 输出；HTML / 图片直接打印源文件，相对 CSS 与图片天然可用；`.docx` 由 docx-preview 离屏渲染（图片转 base64），不会把应用窗口内容截成图片
+- **降级提示**：个别图片路径无法解析等降级项会汇总成提示（最多列 5 条），不影响其余内容导出
+
 ### Git 版本管理
 
 打开 Git 仓库目录后，左侧目录树下方自动出现 Git 面板（非仓库目录不显示；`Ctrl+Shift+G` 或工具栏 Git 按钮可切换显隐）：
 
+- **从 Git 克隆**：工具栏「从 Git 打开」输入仓库地址（HTTPS / SSH / 本地路径）、存放目录与可选分支，实时显示克隆进度与日志，完成后自动打开该项目目录
 - **自动检测**：通过 `git rev-parse` 识别仓库，支持在仓库的任意子目录打开；未安装 Git 时给出提示，并可在面板 ⋯ 菜单中手动指定 `git.exe` 路径
 - **变更列表**：按「冲突 / 已暂存 / 未暂存（含未跟踪）」分组，文件带状态角标（M 修改、A 新增、D 删除、R 重命名、U 未跟踪、! 冲突），目录树节点同步显示状态角标与后代变更数量
 - **暂存与提交**：勾选文件即暂存（取消勾选即取消暂存），支持整组勾选；提交信息支持多行、历史信息快速回填，`Ctrl+Enter` 提交；存在冲突或未暂存文件时禁止提交
+- **AI 生成提交信息**：基于已暂存改动（无暂存时用全部改动）流式生成提交信息，生成中可中断，已填写内容时先确认覆盖
+- **提交信息规范**：⋮ 菜单「提交规范设置…」可编辑规范正文与 AI 提示词模板（完整版 / 精简版预设、可恢复默认）；开启提交前校验后，不合规仅提示，确认后仍可提交
 - **差异比对**：点击文件查看逐行 diff，支持内联 / 并排切换与复制，可查看工作区、暂存区或某次提交的差异
 - **历史记录**：仓库整体历史与单文件历史（`--follow`，可追到重命名前），支持关键字过滤、加载更多，点击提交查看该次改动
 - **还原文件**：目录树文件右键「还原此文件」可丢弃未提交的修改（二次确认）
@@ -168,8 +199,26 @@ Office / PDF / RTF / EPUB / ODT / CSV 文档可在**本地**一键转换为 Mark
 - **常用操作**：`↑` `↓` 翻阅历史命令，`Ctrl+C` 中断（有选中文本时仍为复制），`Ctrl+L` 清屏，多行粘贴逐行执行，清屏 / 终止 / 关闭面板按钮齐备
 - **执行反馈**：回车后命令回显到输出区，执行期间不显示输入行；命令执行结束（输出停止约 0.3 秒）后提示符与输入框才重新出现，同 VS Code
 - **高度可调**：拖动面板顶部可调整高度并记忆；关闭面板不会结束其中的终端，再次打开即可继续
+- **系统终端**：目录树节点右键「在系统终端中打开」，另开一个**真实终端窗口**（自动探测 Windows Terminal / Ghostty / PowerShell 7 / PowerShell / 命令提示符 / Git Bash 等，未安装的不显示），拥有完整 TTY，可正常运行 vim / less / tmux / Claude Code 等全屏程序；检测到多个时可在子菜单指定，选择会被记住
 
-> 说明：终端由主进程（`electron/terminal.cjs`）通过管道启动系统 shell，不引入原生依赖；Windows 中文输出按 UTF-8 / GB18030 自动识别，不会乱码。受管道模式限制，vim、less 等需要真实 TTY 的全屏程序无法使用，普通命令与 `python` / `node` 等交互式 REPL 可正常使用。
+> 说明：内置面板由主进程（`electron/terminal.cjs`）通过管道启动系统 shell，不引入原生依赖；Windows 中文输出按 UTF-8 / GB18030 自动识别，不会乱码。受管道模式限制，面板内的 vim、less 等需要真实 TTY 的全屏程序无法使用（请改用上面的「在系统终端中打开」），普通命令与 `python` / `node` 等交互式 REPL 可正常使用。
+>
+> 面板接入真实 PTY（node-pty + xterm.js）的改造路线、验收标准与分阶段回滚方案见 `docs/内置终端接入PTY改造方案.md`。
+
+### 工具集
+
+工具栏「工具集」按钮或 `Ctrl+Alt+T` 打开右侧抽屉（可全屏），内置常用开发小工具：
+
+| 工具 | 分类 | 能力 |
+| --- | --- | --- |
+| **JSON 格式化** | 文本处理 | 源码 + 虚拟滚动树双栏工作台，大 JSON 懒加载与搜索，格式化 / 压缩 / 排序键 / 转义与去转义 |
+| **Base64 编解码** | 编码转换 | 文本与 Base64 互转，支持 URL 安全字符集 |
+| **哈希计算** | 哈希加密 | MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512，支持 HMAC 密钥 |
+| **时间戳转换** | 时间日期 | 秒 / 毫秒自动识别，输出本地时间、ISO 与 UTC |
+| **进程管理** | 开发辅助 | 按端口号 / 服务名 / PID 查进程并一键结束（含子进程），专治「端口被占用」；拦截系统关键进程与应用自身进程 |
+
+- **通用能力**：分类筛选、关键字搜索、收藏与最近使用；部分工具（如 JSON 格式化）可把处理结果插入当前文档光标处
+- **实现说明**：进程管理只调用系统自带命令（Windows 为 `netstat` / `tasklist` / `taskkill` / PowerShell，POSIX 为 `ps` / `lsof` / `kill`），不引入第三方依赖；PID 先转数字再拼命令，杜绝命令注入
 
 ### 系统集成
 
@@ -192,21 +241,26 @@ Office / PDF / RTF / EPUB / ODT / CSV 文档可在**本地**一键转换为 Mark
 | `Ctrl+Shift+T` | 打开内置暂存区 |
 | `Ctrl+Shift+G` | 显示 / 隐藏 Git 面板 |
 | `` Ctrl+` `` | 显示 / 隐藏终端面板 |
+| `Ctrl+Alt+T` | 打开 / 关闭工具集 |
+| `Ctrl+滚轮`（预览区） | 放大 / 缩小 Markdown 预览 |
 | `F12` | 开发者工具 |
 
 ## 目录结构
 
 ```
-markdown-desktop/
+xj-editor/
 ├── electron/                 # Electron 主进程与预加载脚本
-│   ├── main.cjs              # 窗口、文件系统、单实例、mdlocal:// 协议
+│   ├── main.cjs              # 窗口、文件系统、单实例、mdlocal:// 协议、导出 PDF
+│   ├── process.cjs           # 进程管理（按端口 / 服务名查询并结束，系统命令实现）
 │   ├── docConvert.cjs        # 文档本地转 Markdown（anydoc WASM）
 │   ├── ai.cjs                # AI 请求（多厂商 / 多协议 / 多模态）
 │   ├── aiLogger.cjs          # AI 调用日志（按月 JSON 落盘 / 脱敏 / Token 统计）
 │   ├── aiChats.cjs           # AI 对话会话持久化（多会话 / 历史对话，多窗口共享）
 │   ├── quickAi.cjs           # 快捷 AI 类型与内置提示词（可定制，JSON 持久化）
+│   ├── git.cjs               # Git 版本管理（调用系统 git，写操作串行）
+│   ├── commitSpec.cjs        # Git 提交规范配置（AI 生成提交信息）
 │   ├── fileassoc.cjs         # Windows 文件关联
-│   ├── terminal.cjs          # 终端会话（shell 子进程管理 / 编码识别）
+│   ├── terminal.cjs          # 内置终端（管道 shell）与系统外部终端探测
 │   └── preload.cjs           # 渲染进程桥接层（window.mdAPI）
 ├── src/
 │   ├── components/
@@ -224,12 +278,19 @@ markdown-desktop/
 │   │   ├── TerminalPanel.vue     # 底部终端面板（多标签 / 高度可调）
 │   │   ├── TerminalView.vue      # 单个终端视图（输出渲染 / 命令输入）
 │   │   ├── TerminalIcon.vue      # 终端图标
+│   │   ├── PdfExportDialog.vue   # 导出 PDF 版面设置（纸张 / 方向 / 边距 / 缩放 / 页码）
+│   │   ├── pdf/                  # PDF 阅读器（pdf.js）
+│   │   │   ├── PdfViewer.vue     # 阅读器外壳（页码 / 缩放 / 高亮标注 / 批注）
+│   │   │   ├── PdfPage.vue       # 单页渲染与文本选择
+│   │   │   ├── PdfNotesPanel.vue # 批注列表
+│   │   │   └── PdfNoteCard.vue   # 批注卡片（Markdown 渲染 / AI 笔记）
+│   │   ├── Git*.vue              # Git 面板与弹窗（变更 / 差异 / 历史 / 分支 / 储藏 / 克隆）
 │   │   ├── ImageHostingConfigDialog.vue  # 图床配置
 │   │   ├── PlantUmlConfigDialog.vue      # PlantUML 服务配置
 │   │   ├── FileAssociationsDialog.vue    # 文件关联
 │   │   └── settings/                     # 统一「设置」窗口（左侧分类 + 右侧配置）
 │   │       ├── SettingsDialog.vue        # 设置窗口外壳（分类导航 / 保存与未保存提示）
-│   │       ├── AppearancePanel.vue       # 外观：默认视图模式、代码高亮主题
+│   │       ├── AppearancePanel.vue       # 外观：应用主题、默认视图、显示字体、代码高亮主题
 │   │       ├── ImageHostingPanel.vue     # 图片与图床
 │   │       ├── PlantUmlPanel.vue         # PlantUML 服务
 │   │       ├── AiConfigPanel.vue         # AI 厂商配置
@@ -237,10 +298,15 @@ markdown-desktop/
 │   │       └── FileAssociationsPanel.vue # 文件关联
 │   ├── QuickAiPromptsDialog.vue  # 快捷 AI 提示词编辑弹窗（AI 面板入口）
 │   ├── composables/
-│   │   └── useAiChat.ts          # AI 对话组合式逻辑（会话管理 / 流式 / 中断）
+│   │   ├── useAiChat.ts          # AI 对话组合式逻辑（会话管理 / 流式 / 中断）
+│   │   ├── useTheme.ts           # 浅色 / 深色 / 跟随系统主题（多窗口同步）
+│   │   └── usePdfDocument.ts     # pdf.js 文档加载（worker / cmap / 运行时兼容补丁）
 │   ├── utils/
 │   │   ├── aiChat.ts             # AI 对话会话读写与上下文构建
 │   │   ├── markdown.ts           # Markdown 渲染（图表/公式/高亮/同步滚动）
+│   │   ├── docxExport.ts         # Markdown → Word（.docx）转换
+│   │   ├── git.ts                # Git 输出解析与变更状态整理
+│   │   ├── commitSpec.ts         # 提交规范与 AI 提交信息提示词
 │   │   ├── metadata.ts           # 元数据字段清单与 AI 元数据合并（无注释、时间字段系统维护）
 │   │   ├── history.ts            # 自定义撤销 / 重做历史栈
 │   │   ├── find.ts               # 查找定位与高亮
@@ -248,11 +314,21 @@ markdown-desktop/
 │   │   ├── ai.ts                 # AI 配置、对话与图表生成
 │   │   ├── quickAi.ts            # 快捷 AI 类型配置与提示词渲染
 │   │   ├── plantUmlConfig.ts     # PlantUML 服务配置
+│   │   ├── previewZoom.ts        # 预览缩放（25% ~ 500%，Ctrl+滚轮）
+│   │   ├── printExport.ts        # 多格式 PDF 导出（打印 HTML 生成 / 版面参数）
+│   │   ├── fonts.ts              # 显示字体清单与 CSS 变量下发
+│   │   ├── pdfNotes.ts           # PDF 标注与笔记（sidecar 落盘）
+│   │   ├── pdfAi.ts              # PDF AI 笔记生成
 │   │   ├── terminal.ts           # 终端行缓冲（ANSI 解析）与提示符计算
 │   │   └── fileUtils.ts          # 路径 / 文件类型 / mdlocal:// 工具
-│   ├── styles/code-themes/       # 12 个代码高亮主题
+│   ├── styles/
+│   │   ├── code-themes/          # 12 个代码高亮主题
+│   │   └── dark.css              # 深色主题自定义变量与组件覆盖
+│   ├── tools/                    # 工具集（注册表 / 分类 / 抽屉面板 / widgets 内置工具）
 │   ├── App.vue                   # 应用外壳（工具栏 / 目录树 / 状态栏）
 │   └── main.ts                   # 应用入口
+├── docs/                     # 设计文档（如内置终端接入 PTY 改造方案）
+├── scripts/                  # 构建脚本（复制 pdf.js 资源 / after-pack）
 ├── release_app/              # 打包产物
 │   ├── Markdown编辑器 Setup 1.0.0.exe   # NSIS 安装程序
 │   └── win-unpacked/                   # 免安装绿色版
@@ -353,6 +429,17 @@ npm run dist
 | 嵌入图片 | 文档模型 assets 提取 | 本地模式导出到 `xxx-assets/`；图床模式上传后引用 URL（上传失败自动回退本地） |
 | 错误处理 | 错误码映射（needsOcr / encrypted / malformed 等） | 面向用户的清晰提示（如扫描版 PDF 需先 OCR） |
 
+### PDF 阅读与导出
+
+| 模块 | 技术 | 用途 |
+| --- | --- | --- |
+| PDF 阅读 | **pdfjs-dist 6** + 自绘 PdfViewer | 本地渲染、仅渲染进入视口的页面；页码跳转、缩放、适应宽度 / 整页、文本选择高亮标注、批注面板、阅读进度记忆 |
+| 运行时适配 | **polyfill + Blob Worker** | 补齐 Chromium 130 缺失的 ES2025 方法（`Math.sumPrecise`、`Map.getOrInsertComputed` 等）；worker 内联加载，规避 `file://` 下的 Worker CORS 限制 |
+| 标注与笔记 | sidecar `原文件.notes.json` | 高亮标注与 Markdown 笔记随文档落盘，可调用 AI 生成笔记 |
+| PDF 导出 | **Chromium `printToPDF`**（隐藏窗口） | 矢量输出、文字可选中；主进程统一控制纸张（含自定义毫米尺寸）、方向、边距，页脚页码由打印样式生成 |
+| Word 转 PDF | **docx-preview 0.3.7** | 离屏渲染 `.docx`（样式提取 + 图片转 base64），再交给 `printToPDF` |
+| 打印 HTML | **marked + KaTeX（字体内联）** | Markdown 复用预览渲染管线，Mermaid 为矢量、图片走 `mdlocal://` |
+
 ### 桌面能力
 
 | 模块 | 技术 | 用途 |
@@ -362,11 +449,6 @@ npm run dist
 | 文件关联 | **fileassoc.cjs**（写入 `HKCU\Software\Classes`） | 注册/取消文件关联与「打开方式」候选，无需管理员权限 |
 | AI 请求 | **ai.cjs**（原生 fetch + AbortController） | 统一封装 OpenAI 兼容 / Anthropic / Google Gemini 三种协议 |
 | 单实例 | **requestSingleInstanceLock** | 重复启动时把文件转发给已有窗口并聚焦 |
-
-## 与 myhub 知识库编辑器的差异
-
-- 移除知识库业务逻辑（知识点保存、附件上传等），专注本地文件编辑
-- 新增桌面文件管理：打开目录树、保存/另存为/导出 HTML
-- 新增 Markdown / HTML / JSON 三种编辑/分屏/预览模式
-- 新增 AI 助手、图床配置、PlantUML 私有化服务、文档一键转 Markdown
-- 新增查找/替换、自定义撤销/重做历史、目录树右键菜单与重启记忆
+| 进程管理 | **process.cjs**（netstat / tasklist / taskkill / PowerShell） | 按端口、服务名、PID 查询并结束进程；PID 先转数字再拼命令，拦截系统关键进程与应用自身 |
+| 外部终端 | **terminal.cjs**（探测 + 分离进程启动） | 在系统终端（Windows Terminal / Ghostty / PowerShell / Git Bash 等）中打开指定目录，拥有完整 TTY |
+| 主题 | **Element Plus dark css-vars + 自定义 dark.css** | `<html class="dark">` 驱动 CSS 变量级切换，跟随系统与多窗口同步 |
