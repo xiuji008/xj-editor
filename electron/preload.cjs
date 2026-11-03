@@ -76,6 +76,14 @@ contextBridge.exposeInMainWorld('mdAPI', {
   saveFile: ({ filePath, content }) => ipcRenderer.invoke('dialog:save', { filePath, content }),
   saveAs: ({ content, defaultPath, filters }) => ipcRenderer.invoke('dialog:saveAs', { content, defaultPath, filters }),
   exportHtml: ({ html, defaultPath }) => ipcRenderer.invoke('dialog:exportHtml', { html, defaultPath }),
+  /**
+   * 导出 PDF：主进程用隐藏窗口的 Chromium 打印。
+   * - html：渲染进程生成的打印用 HTML（Markdown / 文本类）
+   * - sourceFile：直接打印源文件（HTML / 图片，相对资源天然可用）
+   * - injectCss：打印前追加的样式（如让图片居中缩放）
+   */
+  exportPdf: ({ html, sourceFile, injectCss, defaultPath, options }) =>
+    ipcRenderer.invoke('dialog:exportPdf', { html, sourceFile, injectCss, defaultPath, options }),
   // 导出 Word：data 为渲染进程生成的 docx 二进制（Uint8Array，结构化克隆传输）
   exportDocx: ({ data, defaultPath }) => ipcRenderer.invoke('dialog:exportDocx', { data, defaultPath }),
   // 读取本地文件二进制（导出 Word 嵌入本地图片用）
@@ -109,6 +117,8 @@ contextBridge.exposeInMainWorld('mdAPI', {
   // 系统
   revealFile: (filePath) => ipcRenderer.invoke('shell:reveal', { filePath }),
   openWithDefault: (filePath) => ipcRenderer.invoke('shell:openPath', { filePath }),
+  // 用系统默认浏览器打开链接（Markdown 预览中的超链接）
+  openUrl: (url) => ipcRenderer.invoke('shell:openUrl', { url }),
   // 系统剪贴板 / 系统拖拽（复制文件到桌面等系统位置）
   writeFilesToClipboard: (paths) => ipcRenderer.invoke('clipboard:writeFiles', { paths }),
   startFileDrag: (paths) => ipcRenderer.send('drag:startFiles', { paths }),
@@ -203,6 +213,9 @@ contextBridge.exposeInMainWorld('mdAPI', {
     killAll: () => ipcRenderer.invoke('terminal:killAll'),
     complete: ({ id, cwd, kind, input, cursor }) =>
       ipcRenderer.invoke('terminal:complete', { id, cwd, kind, input, cursor }),
+    // 系统外部终端：另开一个真实的终端窗口打开指定目录
+    externalList: () => ipcRenderer.invoke('terminal:externalList'),
+    openExternal: ({ dir, terminalId }) => ipcRenderer.invoke('terminal:openExternal', { dir, terminalId }),
     onData: (callback) => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('terminal:data', listener)
@@ -260,6 +273,16 @@ contextBridge.exposeInMainWorld('mdAPI', {
     get: () => ipcRenderer.invoke('commitSpec:get'),
     set: (config) => ipcRenderer.invoke('commitSpec:set', config),
     reset: (preset) => ipcRenderer.invoke('commitSpec:reset', { preset }),
+  },
+  // 进程管理（按端口 / 服务名查询进程并结束，解决端口被占用）
+  process: {
+    /**
+     * 查询进程
+     * @param {{ keyword?: string, mode?: string, deep?: boolean, onlyPorts?: boolean, refresh?: boolean }} payload 查询条件
+     */
+    search: (payload) => ipcRenderer.invoke('proc:search', payload || {}),
+    /** 结束进程（tree 为 true 时连同子进程一起结束） */
+    kill: (payload) => ipcRenderer.invoke('proc:kill', payload || {}),
   },
   // 快捷 AI 动作（内置生成类型与提示词，可定制修改）
   quickAi: {

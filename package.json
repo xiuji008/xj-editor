@@ -21,6 +21,7 @@
     "@open-file-viewer/vue": "^0.1.42",
     "chart.js": "^4.5.1",
     "docx": "^9.11.0",
+    "docx-preview": "^0.3.7",
     "element-plus": "^2.9.7",
     "highlight.js": "^11.11.1",
     "katex": "^0.17.0",

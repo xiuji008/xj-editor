@@ -396,7 +396,7 @@ function onRemove() {
 .note-md :deep(code) {
   padding: 1px 4px;
   border-radius: 3px;
-  background: #f5f7fa;
+  background: var(--md-inline-code-bg);
   color: #e96900;
   font-family: Consolas, Monaco, monospace;
   font-size: 12px;
@@ -406,7 +406,7 @@ function onRemove() {
   margin: 6px 0;
   padding: 8px;
   border-radius: 4px;
-  background: #f5f7fa;
+  background: var(--bg-color);
   overflow-x: auto;
 }
 
@@ -419,8 +419,8 @@ function onRemove() {
 .note-md :deep(blockquote) {
   margin: 6px 0;
   padding: 2px 10px;
-  border-left: 3px solid #dcdfe6;
-  color: #606266;
+  border-left: 3px solid var(--border-color);
+  color: var(--text-color-regular);
 }
 
 .note-md :deep(strong) {

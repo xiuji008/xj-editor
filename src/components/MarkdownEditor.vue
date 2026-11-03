@@ -3,7 +3,7 @@
     <!-- 编辑器主体：左右分栏 -->
     <div class="editor-body">
       <!-- 左侧：Markdown 源码 -->
-      <div class="editor-pane source-pane" v-show="!viewMode">
+      <div ref="sourcePaneRef" class="editor-pane source-pane" v-show="!viewMode">
         <div class="pane-header">
           <span class="pane-title">
             <el-icon><Document /></el-icon> Markdown 源码
@@ -84,6 +84,19 @@
           @select="scheduleAskAi"
           @blur="onAskAiBlur"
         />
+
+        <!-- 粘贴图片时的上传中提示：贴在粘贴位置，上传完成或失败后移除 -->
+        <transition name="el-fade-in">
+          <div
+            v-if="pasteLoading && pasteLoadingVisible"
+            ref="pasteLoadingRef"
+            class="paste-loading"
+            :style="{ left: pasteLoadingPos.left + 'px', top: pasteLoadingPos.top + 'px' }"
+          >
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>{{ pasteLoadingText }}</span>
+          </div>
+        </transition>
 
         <!-- 查找 / 替换栏 -->
         <FindBar
@@ -245,13 +258,47 @@
         </div>
       </div>
     </teleport>
+
+    <!-- 插入链接弹窗：分别填写跳转链接与展示文本 -->
+    <el-dialog
+      v-model="linkDialog.visible"
+      title="插入链接"
+      width="420px"
+      append-to-body
+      :close-on-click-modal="false"
+      @closed="() => textareaRef?.focus()"
+    >
+      <el-form label-width="72px" @submit.prevent>
+        <el-form-item label="跳转链接">
+          <el-input
+            v-model="linkDialog.url"
+            placeholder="https://example.com"
+            clearable
+            :autofocus="true"
+            @keydown.enter.prevent="confirmInsertLink"
+          />
+        </el-form-item>
+        <el-form-item label="展示文本">
+          <el-input
+            v-model="linkDialog.text"
+            placeholder="链接显示的文字（留空则显示链接地址）"
+            clearable
+            @keydown.enter.prevent="confirmInsertLink"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="linkDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="confirmInsertLink">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, View, ArrowDown, ArrowRight, List, Close, MagicStick, TrendCharts, ZoomIn, ZoomOut } from '@element-plus/icons-vue'
+import { Document, View, ArrowDown, ArrowRight, List, Close, MagicStick, TrendCharts, ZoomIn, ZoomOut, Loading } from '@element-plus/icons-vue'
 import { usePreviewZoom, isZoomModifier } from '../utils/previewZoom'
 import {
   renderMarkdown,
@@ -277,7 +324,7 @@ import {
   dataUrlToFile,
   isAbsolutePath,
 } from '../utils/fileUtils'
-import { getTextareaSelectionEndPos } from '../utils/caret'
+import { getTextareaSelectionEndPos, getTextareaCaretPos } from '../utils/caret'
 import { useTextareaHistory } from '../utils/history'
 import FindBar from './FindBar.vue'
 import PreviewFindBar from './PreviewFindBar.vue'
@@ -323,6 +370,7 @@ const emit = defineEmits<{
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
+const sourcePaneRef = ref<HTMLDivElement>()
 const previewRef = ref<HTMLDivElement>()
 /** 预览缩放容器（markdown 块级元素都在其下，同步滚动按它取块） */
 const previewInnerRef = ref<HTMLDivElement>()
@@ -578,7 +626,8 @@ const onPreviewScroll = (e: Event) => {
 }
 
 /**
- * 预览点击：点击指向本地文件的链接时交给父组件打开
+ * 预览点击：http/https/mailto/tel 链接交给系统默认浏览器打开，
+ * 指向本地文件的链接交给父组件打开
  * （支持 .md/.txt/图片/PDF 等，父组件按类型分发到编辑器或预览器）
  */
 const onPreviewClick = (e: MouseEvent) => {
@@ -586,7 +635,19 @@ const onPreviewClick = (e: MouseEvent) => {
   const anchor = target.closest?.('a')
   if (!anchor) return
   const href = anchor.getAttribute('href') || ''
-  if (/^(https?:|mailto:|tel:|#|mdlocal:|data:)/i.test(href)) return
+  if (/^(https?:|mailto:|tel:)/i.test(href)) {
+    // 阻止 Electron 窗口内导航，改用系统默认浏览器打开
+    e.preventDefault()
+    if (window.mdAPI?.openUrl) {
+      window.mdAPI.openUrl(href).then((res) => {
+        if (res && res.ok === false && res.error) ElMessage.warning(res.error)
+      })
+    } else if (typeof window !== 'undefined') {
+      window.open(href, '_blank', 'noopener')
+    }
+    return
+  }
+  if (/^(#|mdlocal:|data:)/i.test(href)) return
   e.preventDefault()
   const abs = props.imageBaseDir ? resolvePath(props.imageBaseDir, href) : href
   if (abs) emit('open-file', abs)
@@ -641,8 +702,27 @@ const insertCodeBlock = () => {
   insertMarkdown('\n```\n\n```\n')
 }
 
+// ========== 插入链接弹窗 ==========
+const linkDialog = ref({ visible: false, text: '', url: '' })
+
 const insertLink = () => {
-  insertMarkdown('[文本](https://)')
+  const ta = textareaRef.value
+  // 选中的文本作为默认展示文本
+  const selected = ta ? ta.value.slice(ta.selectionStart, ta.selectionEnd).trim() : ''
+  linkDialog.value = { visible: true, text: selected, url: 'https://' }
+}
+
+const confirmInsertLink = () => {
+  let url = linkDialog.value.url.trim()
+  if (!url) {
+    ElMessage.warning('请填写跳转链接')
+    return
+  }
+  // 无协议时默认补全 https://
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url)) url = 'https://' + url
+  const text = linkDialog.value.text.trim() || url
+  insertMarkdown(`[${text}](${url})`)
+  linkDialog.value.visible = false
 }
 
 /** 插入表格 */
@@ -712,6 +792,70 @@ const insertImage = async () => {
   }
 }
 
+/* ========== 粘贴图片的上传中提示 ========== */
+/** 是否正在处理粘贴的图片（上传 / 保存中） */
+const pasteLoading = ref(false)
+/** 提示文案 */
+const pasteLoadingText = ref('')
+/** 提示是否落在源码区可视范围内（滚动出可视区时隐藏） */
+const pasteLoadingVisible = ref(false)
+/** 提示相对源码区的位置 */
+const pasteLoadingPos = ref({ left: 0, top: 0 })
+const pasteLoadingRef = ref<HTMLElement>()
+/** 粘贴位置锚点（视口坐标 + 当时的滚动偏移，用于滚动后重新定位） */
+let pasteAnchor: { x: number; y: number; lineHeight: number; scrollTop: number; scrollLeft: number } | null = null
+
+/** 按粘贴锚点（叠加之后的滚动偏移）刷新提示位置；粘贴行滚出可视区时隐藏 */
+const updatePasteLoadingPos = () => {
+  const ta = textareaRef.value
+  const pane = sourcePaneRef.value
+  if (!ta || !pane || !pasteAnchor) return
+  const paneRect = pane.getBoundingClientRect()
+  const taRect = ta.getBoundingClientRect()
+  const x = pasteAnchor.x - (ta.scrollLeft - pasteAnchor.scrollLeft)
+  const y = pasteAnchor.y - (ta.scrollTop - pasteAnchor.scrollTop)
+  const lineH = pasteAnchor.lineHeight || 20
+  pasteLoadingVisible.value = y >= taRect.top + 2 && y <= taRect.bottom - 2
+  if (!pasteLoadingVisible.value) return
+  // 提示贴在行末右侧；靠近右边界时左移，避免被源码区裁掉
+  const chipW = pasteLoadingRef.value?.offsetWidth || 160
+  const maxLeft = Math.max(4, taRect.right - paneRect.left - chipW - 4)
+  pasteLoadingPos.value = {
+    left: Math.min(Math.max(x - paneRect.left + 4, 4), maxLeft),
+    top: Math.min(
+      Math.max(y - paneRect.top - lineH / 2, taRect.top - paneRect.top + lineH / 2),
+      taRect.bottom - paneRect.top - lineH / 2,
+    ),
+  }
+}
+
+/** 在粘贴落点显示上传中提示 */
+const showPasteLoading = (count: number) => {
+  const ta = textareaRef.value
+  if (!ta) return
+  const pos = getTextareaCaretPos(ta, ta.selectionStart)
+  if (!pos) return
+  pasteLoadingText.value = count > 1 ? `正在上传 ${count} 张图片…` : '图片上传中…'
+  pasteAnchor = {
+    x: pos.x,
+    y: pos.y,
+    lineHeight: pos.lineHeight || 20,
+    scrollTop: ta.scrollTop,
+    scrollLeft: ta.scrollLeft,
+  }
+  pasteLoading.value = true
+  updatePasteLoadingPos()
+  // 提示渲染后拿到实际宽度，再校正一次水平位置
+  nextTick(updatePasteLoadingPos)
+}
+
+/** 移除上传中提示（上传完成或失败后调用） */
+const hidePasteLoading = () => {
+  pasteLoading.value = false
+  pasteLoadingVisible.value = false
+  pasteAnchor = null
+}
+
 /**
  * 粘贴处理：粘贴图片时自动处理（图床上传 / 本地保存），
  * 粘贴本地文件路径时转成 Markdown 链接。
@@ -727,6 +871,7 @@ const onPaste = async (e: ClipboardEvent) => {
       ElMessage.warning('图片粘贴功能仅在桌面应用中可用')
       return
     }
+    showPasteLoading(images.length)
     try {
       if (isImageHostingEnabled()) {
         const results = await uploadImages(images)
@@ -753,6 +898,8 @@ const onPaste = async (e: ClipboardEvent) => {
       }
     } catch (err: any) {
       ElMessage.error(`粘贴图片失败：${err?.message || '未知错误'}`)
+    } finally {
+      hidePasteLoading()
     }
     return
   }
@@ -1249,6 +1396,8 @@ const scheduleScrollSync = (source: 'source' | 'preview') => {
 
 /** 源码区滚动：同步预览滚动并刷新浮动按钮位置 */
 const onSourceScroll = (event: Event) => {
+  // 粘贴图片的上传提示跟着粘贴位置滚动 / 滚出可视区时隐藏
+  updatePasteLoadingPos()
   scheduleAskAi()
   // 预览防抖渲染窗口内，预览仍是旧内容，先不同步，渲染完成后统一锚定一次
   if (previewRenderPending) return
@@ -1768,7 +1917,7 @@ defineExpose({
   outline: none;
   resize: none;
   padding: 16px;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--md-source-font, 'Consolas', 'JetBrains Mono', 'Courier New', monospace);
   font-size: 14px;
   line-height: 1.7;
   color: var(--text-color-primary);
@@ -1778,6 +1927,32 @@ defineExpose({
 
 .source-textarea:focus {
   outline: none;
+}
+
+/* 粘贴图片时的上传中提示：贴在粘贴位置，不遮挡编辑交互 */
+.paste-loading {
+  position: absolute;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  padding: 1px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--text-color-primary);
+  background: var(--bg-color-white);
+  border: 1px solid var(--color-primary-light-5);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.paste-loading .el-icon {
+  color: var(--color-primary);
+  font-size: 13px;
 }
 
 /* 选中源码后的浮动按钮组：问 AI / 生成图表 */
@@ -1881,6 +2056,7 @@ defineExpose({
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
+  font-family: var(--md-preview-font, 'Segoe UI', 'Microsoft YaHei', sans-serif);
   font-size: 15px;
   line-height: 1.8;
   color: var(--text-color-primary);
@@ -1942,7 +2118,7 @@ defineExpose({
   padding: 2px 6px;
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 13px;
-  background: #f5f7fa;
+  background: var(--md-inline-code-bg);
   border-radius: 3px;
   color: #e6a23c;
 }
@@ -2132,7 +2308,7 @@ defineExpose({
 .markdown-body :deep(.fm-title) {
   font-size: 20px;
   font-weight: 700;
-  color: #303133;
+  color: var(--text-color-primary);
   margin-bottom: 8px;
   display: flex;
   align-items: center;
@@ -2148,7 +2324,7 @@ defineExpose({
   gap: 6px;
   margin-bottom: 8px;
   font-size: 13px;
-  color: #606266;
+  color: var(--text-color-regular);
 }
 .markdown-body :deep(.fm-meta-item) {
   display: flex;
@@ -2170,7 +2346,7 @@ defineExpose({
 }
 .markdown-body :deep(.fm-desc) {
   font-size: 14px;
-  color: #606266;
+  color: var(--text-color-regular);
   line-height: 1.6;
 }
 

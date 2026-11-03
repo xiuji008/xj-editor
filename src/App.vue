@@ -12,6 +12,7 @@ import {
   Edit,
   View,
   Files,
+  Printer,
   Refresh,
   Fold,
   Expand,
@@ -30,6 +31,8 @@ import {
   ArrowRight,
   Postcard,
   Monitor,
+  Moon,
+  Sunny,
 } from '@element-plus/icons-vue'
 import MarkdownEditor from './components/MarkdownEditor.vue'
 import HtmlEditor from './components/HtmlEditor.vue'
@@ -40,6 +43,7 @@ import AiPanel from './components/AiPanel.vue'
 import AiChatWindow from './components/AiChatWindow.vue'
 import AiLogDialog from './components/AiLogDialog.vue'
 import SettingsDialog from './components/settings/SettingsDialog.vue'
+import PdfExportDialog from './components/PdfExportDialog.vue'
 import GitPanel from './components/GitPanel.vue'
 import GitDiffDialog from './components/GitDiffDialog.vue'
 import GitHistoryDialog from './components/GitHistoryDialog.vue'
@@ -48,6 +52,7 @@ import GitIcon from './components/GitIcon.vue'
 import TerminalPanel from './components/TerminalPanel.vue'
 import TerminalIcon from './components/TerminalIcon.vue'
 import { provideToolContext, ToolLauncher } from './tools'
+import { useTheme } from './composables/useTheme'
 import {
   buildGitBadgeMap,
   gitPathKey,
@@ -58,7 +63,7 @@ import {
   type GitBadge,
 } from './utils/git'
 import { getImageHostingConfig } from './utils/imageHosting'
-import { buildOutlineBlock } from './utils/ai'
+import { buildOutlineBlock, hasSystemFiles, resolveDroppedFilePath } from './utils/ai'
 import {
   CODE_THEMES,
   DEFAULT_CODE_THEME,
@@ -71,9 +76,19 @@ import {
 } from './utils/markdown'
 import { applyAiMetadata } from './utils/metadata'
 import { exportMarkdownToDocx, type DocxExportResult } from './utils/docxExport'
+import { buildPrintDocument, type PdfPageSettings, type PrintableKind } from './utils/printExport'
 import { basename, dirname, extname, classifyFile, type FileKind } from './utils/fileUtils'
 import FileIcon from './components/FileIcon.vue'
 import { vOverflowTip } from './utils/overflowTip'
+import {
+  DEFAULT_PREVIEW_FONT,
+  DEFAULT_SOURCE_FONT,
+  PREVIEW_FONT_KEY,
+  SOURCE_FONT_KEY,
+  applyFonts,
+  getFontStack,
+  readStoredFont,
+} from './utils/fonts'
 import katexCss from 'katex/dist/katex.min.css?inline'
 
 /* ========== 文件状态 ========== */
@@ -83,6 +98,14 @@ const isDirty = ref(false)
 const fileType = ref<FileKind>('markdown')
 /** 右侧是否已打开文件：切换目录后关闭编辑器时置为 false，避免残留上一个目录的文件 */
 const fileOpened = ref(true)
+
+/* ========== 大文本文件保护 ========== */
+/** 超过该大小（字节）的文本文件不再整段渲染，改为截断预览，避免原生 textarea 一次性布局 20MB+ 文本导致卡死 */
+const LARGE_TEXT_BYTES = 2 * 1024 * 1024
+/** 大文件预览最多展示的字符数（约 512KB，textarea 渲染流畅） */
+const LARGE_TEXT_PREVIEW_CHARS = 512 * 1024
+/** 大文件信息：非空表示当前文件以只读预览方式打开 */
+const largeFileInfo = ref<{ size: number; previewChars: number; truncated: boolean } | null>(null)
 /* ========== 窗口身份与每窗口存储（多窗口：状态互不覆盖） ========== */
 /** 当前窗口 id（主进程分配，首个主窗口为 1；纯浏览器环境为 0） */
 const winId = window.mdAPI?.windowId || 0
@@ -95,6 +118,8 @@ const slotId = window.mdAPI?.windowInit?.slot || winId || 0
 const winStore: Storage = typeof sessionStorage === 'object' && sessionStorage ? sessionStorage : localStorage
 
 /* ========== 外观设置（在「设置」中调整，记忆上次选择） ========== */
+/** 应用主题（浅色 / 深色）：工具栏快捷切换；「设置 → 外观」可改为跟随系统 */
+const { isDark, toggleTheme } = useTheme()
 const CODE_THEME_KEY = 'md-code-theme'
 const VIEW_MODE_KEY = 'md-view-mode'
 type ViewMode = 'edit' | 'split' | 'preview'
@@ -114,6 +139,26 @@ const viewMode = ref<ViewMode>(
 
 watch(codeTheme, (value) => localStorage.setItem(CODE_THEME_KEY, value))
 watch(viewMode, (value) => localStorage.setItem(VIEW_MODE_KEY, value))
+
+/**
+ * 显示字体：预览区正文字体与源码编辑区字体分开配置，
+ * 通过 CSS 变量下发到全局，编辑区与预览区样式引用变量后即时生效。
+ */
+const previewFont = ref(readStoredFont(PREVIEW_FONT_KEY, DEFAULT_PREVIEW_FONT))
+const sourceFont = ref(readStoredFont(SOURCE_FONT_KEY, DEFAULT_SOURCE_FONT))
+/** 写入 CSS 变量，使字体即时生效 */
+const flushFonts = () => applyFonts(sourceFont.value, previewFont.value)
+// 首次进入时按已保存的选择下发一次（组件挂载前也需要生效）
+flushFonts()
+
+watch(previewFont, (value) => {
+  localStorage.setItem(PREVIEW_FONT_KEY, value)
+  flushFonts()
+})
+watch(sourceFont, (value) => {
+  localStorage.setItem(SOURCE_FONT_KEY, value)
+  flushFonts()
+})
 
 /**
  * 右侧实际展示的内容类型。
@@ -266,6 +311,7 @@ function closeFile() {
   fileType.value = 'markdown'
   isDirty.value = false
   fileOpened.value = false
+  largeFileInfo.value = null
   suppressDirty = false
   updateTitle()
   syncTreeCurrent()
@@ -413,6 +459,7 @@ const fileName = computed(() => {
 const canSave = computed(
   () =>
     fileOpened.value &&
+    !largeFileInfo.value?.truncated &&
     (!currentPath.value ||
       fileType.value === 'markdown' ||
       fileType.value === 'html' ||
@@ -569,10 +616,21 @@ async function loadFile(filePath: string) {
   currentPath.value = filePath
   fileType.value = kind
   fileOpened.value = true
-  if (kind === 'markdown' || kind === 'html' || kind === 'json' || kind === 'text') {
-    content.value = res.content || ''
+  const isTextLike = kind === 'markdown' || kind === 'html' || kind === 'json' || kind === 'text'
+  // 大文本文件（txt / sql / log 等走原生 textarea 的类型）：只截取头部预览，
+  // 避免 textarea 一次性布局整段内容导致主进程卡死；Markdown/HTML/JSON 走各自编辑器，保持原行为。
+  const size = Number(res.size) || 0
+  const fullText = res.content || ''
+  if (kind === 'text' && size > LARGE_TEXT_BYTES && fullText.length > LARGE_TEXT_PREVIEW_CHARS) {
+    content.value = fullText.slice(0, LARGE_TEXT_PREVIEW_CHARS)
+    largeFileInfo.value = {
+      size,
+      previewChars: LARGE_TEXT_PREVIEW_CHARS,
+      truncated: true,
+    }
   } else {
-    content.value = ''
+    content.value = isTextLike ? fullText : ''
+    largeFileInfo.value = null
   }
   suppressDirty = false
   isDirty.value = false
@@ -635,6 +693,15 @@ function syncTreeCurrent() {
 }
 
 /**
+ * 是否为目录节点（以业务数据为准）。
+ * 注意：lazy 树加载出空目录后，el-tree 会把该节点的 isLeaf 置为 true，
+ * 之后再展开 / 刷新都会被 isLeaf 挡住，不能仅凭 node.isLeaf 判断。
+ */
+function isDirNode(node: any): boolean {
+  return !!node && node.data?.isDirectory === true
+}
+
+/**
  * 递归重新加载一个目录节点，并按刷新前记录的展开路径逐层恢复子目录。
  * 子目录重建后默认收起，这里在父目录加载完成后立即对子目录重新展开，
  * 从而保证任意深度的展开状态在刷新后都不丢失。
@@ -642,11 +709,17 @@ function syncTreeCurrent() {
 function reloadTreeNode(node: any, expandedSet: Set<string>): Promise<void> {
   return new Promise<void>((resolve) => {
     node.loaded = false
+    // 空目录被加载过之后 isLeaf 会变成 true（树的展开箭头也随之隐藏），
+    // 这里按业务数据把目录节点重置回「可展开」，否则刷新后新文件无法展示
+    if (isDirNode(node)) {
+      node.isLeaf = false
+      node.isLeafByUser = false
+    }
     node.expand(() => {
       const childNodes: any[] = node.childNodes || []
       const chain: Promise<void>[] = []
       for (const child of childNodes) {
-        if (child.isLeaf) continue
+        if (!isDirNode(child)) continue
         const p = child.data?.path
         if (p && expandedSet.has(normPath(p))) chain.push(reloadTreeNode(child, expandedSet))
       }
@@ -693,13 +766,13 @@ async function refreshTreeDir(dirPath?: string) {
   // 根节点（打开的目录，level 1）
   let root: any
   for (const node of nodes) {
-    if (node.level === 1 && !node.isLeaf) {
+    if (node.level === 1 && isDirNode(node)) {
       root = node
       break
     }
   }
   const target = dirPath ? findTreeNodeByPath(nodes, dirPath) : root
-  if (!target || target.isLeaf) return
+  if (!isDirNode(target)) return
   await reloadTreeNode(target, expandedSet)
   // 恢复当前高亮
   nextTick(() => {
@@ -715,14 +788,15 @@ async function refreshTreeDir(dirPath?: string) {
  */
 function expandNodeByPath(node: any, targetSet: Set<string>): Promise<void> {
   return new Promise((resolve) => {
-    if (node.isLeaf) {
+    // level 0 是 el-tree 的虚拟根节点（data 为数组），其余节点按业务数据判断
+    if (node.level !== 0 && !isDirNode(node)) {
       resolve()
       return
     }
     const finish = () => {
       const chain: Promise<void>[] = []
       for (const child of node.childNodes || []) {
-        if (child.isLeaf) continue
+        if (!isDirNode(child)) continue
         const p = child.data?.path
         if (p && targetSet.has(normPath(p))) chain.push(expandNodeByPath(child, targetSet))
       }
@@ -893,6 +967,7 @@ async function clearScratch() {
   suppressDirty = true
   content.value = res.content || ''
   isDirty.value = false
+  largeFileInfo.value = null
   suppressDirty = false
   updateTitle()
   nextTick(() => {
@@ -957,6 +1032,7 @@ async function newFile() {
   fileType.value = 'markdown'
   fileOpened.value = true
   isDirty.value = false
+  largeFileInfo.value = null
   suppressDirty = false
   updateTitle()
   // 新建文件无路径：单文件模式下清空目录树中的旧文件节点
@@ -1048,6 +1124,11 @@ function prepareContentForSave(filePath: string, raw: string, isFreshNew: boolea
 async function saveFile() {
   if (!window.mdAPI) {
     ElMessage.warning('此功能仅在桌面版可用')
+    return
+  }
+  // 大文件只读预览：禁止保存截断内容，避免覆盖磁盘上的完整文件
+  if (largeFileInfo.value?.truncated) {
+    ElMessage.warning('文件过大，当前仅预览部分内容，无法在此编辑保存。请使用「用系统默认程序打开」。')
     return
   }
   if (!canSave.value) return
@@ -1143,7 +1224,7 @@ function buildExportHtml(bodyHtml: string): string {
 body {
   margin: 0;
   padding: 32px 24px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  font-family: ${getFontStack(previewFont.value, DEFAULT_PREVIEW_FONT)};
   font-size: 15px;
   line-height: 1.8;
   color: var(--text-color-primary);
@@ -1250,6 +1331,134 @@ async function exportDocx() {
   } finally {
     exportingDocx.value = false
   }
+}
+
+/* ========== 导出 PDF（多格式） ========== */
+/** 导出中标记，避免重复点击（离屏渲染 + Chromium 打印可能耗时数秒） */
+const exportingPdf = ref(false)
+/** 导出设置对话框显隐 */
+const pdfDialogVisible = ref(false)
+/** 对话框对应的源类型（null 表示当前文件不支持） */
+const pdfDialogKind = ref<PrintableKind | null>(null)
+/** 对话框展示的文件名 */
+const pdfDialogFileName = ref('')
+
+/**
+ * 当前文件可用的 PDF 源类型；不支持返回 null。
+ * Word 只支持 OOXML（.docx）；老 .doc、xls/xlsx、ppt/pptx 暂不支持。
+ */
+function resolvePrintableKind(kind: FileKind | 'none', path: string): PrintableKind | null {
+  switch (kind) {
+    case 'markdown':
+      return 'markdown'
+    case 'html':
+      return 'html'
+    case 'json':
+      return 'json'
+    case 'text':
+      return 'text'
+    case 'image':
+      return 'image'
+    case 'office':
+      return /\.docx$/i.test(path) ? 'docx' : null
+    default:
+      return null
+  }
+}
+
+/** 工具栏「导出 PDF」是否可用 */
+const canExportPdf = computed(
+  () => resolvePrintableKind(activeFileType.value, currentPath.value) !== null,
+)
+
+/** 打开导出设置对话框 */
+function openPdfDialog(): void {
+  const kind = resolvePrintableKind(activeFileType.value, currentPath.value)
+  if (!kind) {
+    ElMessage.warning('当前文件类型暂不支持导出 PDF')
+    return
+  }
+  if (!window.mdAPI?.exportPdf) {
+    ElMessage.warning('此功能仅在桌面版可用')
+    return
+  }
+  pdfDialogKind.value = kind
+  pdfDialogFileName.value = fileName.value || basename(currentPath.value) || '未命名'
+  pdfDialogVisible.value = true
+}
+
+/**
+ * 设置确认后执行导出。
+ *
+ * markdown / 文本类走「渲染成打印 HTML」；html / 图片直接把源文件交给打印窗口
+ * （相对资源天然可用）；docx 由 docx-preview 离屏渲染后打印。
+ */
+async function handlePdfConfirm(page: PdfPageSettings): Promise<void> {
+  const kind = pdfDialogKind.value
+  if (!kind || exportingPdf.value) return
+  const api = window.mdAPI
+  if (!api?.exportPdf) {
+    ElMessage.warning('此功能仅在桌面版可用')
+    return
+  }
+  exportingPdf.value = true
+  let loading: ReturnType<typeof ElLoading.service> | null = null
+  try {
+    loading = ElLoading.service({ lock: true, text: '正在生成 PDF…', background: 'rgba(0, 0, 0, 0.3)' })
+    const built = await buildPrintDocument({
+      kind,
+      text: content.value,
+      filePath: currentPath.value,
+      baseDir: currentDir.value,
+      baseName: fileName.value,
+      title: fileName.value.replace(/\.[^.]+$/, '') || '未命名文档',
+      codeTheme: codeTheme.value,
+      fontFamily: getFontStack(previewFont.value, DEFAULT_PREVIEW_FONT),
+      page,
+      onProgress: (text) => loading?.setText(text),
+    })
+    // 打印阶段要弹原生保存对话框，先收起遮罩，避免界面一直转圈
+    loading.close()
+    loading = null
+
+    const res = await api.exportPdf({
+      html: built.html,
+      sourceFile: built.sourceFile,
+      injectCss: built.injectCss,
+      defaultPath: (fileName.value || '未命名').replace(/\.[^.]+$/, '') + '.pdf',
+      options: built.options,
+    })
+    if (res.canceled) return
+    if (res.error) {
+      ElMessage.error(`导出失败：${res.error}`)
+      return
+    }
+    if (res.filePath) refreshTreeDir(dirname(res.filePath))
+    notifyPdfResult(built.warnings, '已导出 PDF')
+  } catch (err) {
+    ElMessage.error(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    loading?.close()
+    exportingPdf.value = false
+  }
+}
+
+/** PDF 生成结果提示：降级项通常是图片缺失或路径无法解析 */
+function notifyPdfResult(warnings: string[], successText: string): void {
+  if (!warnings.length) {
+    ElMessage.success(successText)
+    return
+  }
+  ElMessage({
+    type: 'warning',
+    duration: 6000,
+    showClose: true,
+    dangerouslyUseHTMLString: true,
+    message: `${successText}，但有 ${warnings.length} 项提示：<br>${warnings
+      .slice(0, 5)
+      .map((w) => `• ${escapeHtmlText(w)}`)
+      .join('<br>')}`,
+  })
 }
 
 /**
@@ -1403,6 +1612,76 @@ function onTreeNodeDragStart(e: DragEvent, node: TreeNode) {
   window.mdAPI?.startFileDrag([node.path])
 }
 
+/* ========== 系统文件拖入目录树（从桌面 / 资源管理器复制进来） ========== */
+/** 当前拖拽悬停的目录树节点路径（用于放置高亮） */
+const dropTargetPath = ref('')
+
+/** 拖拽悬停节点：声明为复制操作并高亮目标节点 */
+function onTreeDragOver(e: DragEvent, node: TreeNode) {
+  if (!hasSystemFiles(e)) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  if (dropTargetPath.value !== normPath(node.path)) dropTargetPath.value = normPath(node.path)
+}
+
+/** 拖拽离开节点：仅在真正离开节点时清除高亮，避免子元素间移动导致闪烁 */
+function onTreeDragLeave(e: DragEvent) {
+  const cur = e.currentTarget as HTMLElement | null
+  const related = e.relatedTarget as Node | null
+  if (cur && related && cur.contains(related)) return
+  dropTargetPath.value = ''
+}
+
+/** 拖到某个目录树节点：文件夹节点复制到自身，文件节点复制到其所在目录 */
+async function onTreeNodeDrop(e: DragEvent, node: TreeNode) {
+  dropTargetPath.value = ''
+  if (!hasSystemFiles(e)) return
+  const destDir = node.isDirectory ? node.path : dirname(node.path)
+  await importDroppedFiles(e, destDir)
+}
+
+/** 拖拽悬停在目录树空白区域：声明为复制操作并清除节点高亮 */
+function onTreeRootDragOver(e: DragEvent) {
+  if (!hasSystemFiles(e)) return
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  dropTargetPath.value = ''
+}
+
+/** 拖到目录树空白区域：复制到根目录 */
+async function onTreeRootDrop(e: DragEvent) {
+  dropTargetPath.value = ''
+  if (!hasSystemFiles(e)) return
+  await importDroppedFiles(e, openedDir.value || '')
+}
+
+/**
+ * 把系统拖入的文件 / 文件夹逐个复制到目标目录并刷新目录树。
+ * @param e 拖拽事件
+ * @param destDir 目标目录（为空时忽略本次拖入）
+ */
+async function importDroppedFiles(e: DragEvent, destDir: string) {
+  if (!window.mdAPI || !destDir) return
+  const files = Array.from(e.dataTransfer?.files || [])
+  const paths = files.map(resolveDroppedFilePath).filter((p): p is string => !!p)
+  if (!paths.length) return
+  const errors: string[] = []
+  let okCount = 0
+  for (const srcPath of paths) {
+    // 跳过把目录拖进它自身
+    if (normPath(srcPath) === normPath(destDir)) continue
+    try {
+      const res = await window.mdAPI.copyPath({ srcPath, destDir })
+      if (res?.ok) okCount++
+      else errors.push(`${basename(srcPath)}：${res?.error || '未知错误'}`)
+    } catch (err) {
+      errors.push(`${basename(srcPath)}：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  refreshTreeDir(destDir)
+  if (okCount > 0) ElMessage.success(`已复制 ${okCount} 项到 ${basename(destDir) || destDir}`)
+  if (errors.length) ElMessage.error(`部分复制失败：${errors.join('；')}`)
+}
+
 /** 记录目录展开状态（用于重启后恢复目录树） */
 function onNodeExpand(data: TreeNode) {
   if (!data.isDirectory) return
@@ -1440,7 +1719,7 @@ async function expandAllTree() {
     let truncated = false
 
     const walk = async (node: any, depth: number): Promise<void> => {
-      if (node.isLeaf || !node.data?.path) return
+      if (!node.data?.path || !isDirNode(node)) return
       if (depth > EXPAND_ALL_MAX_DEPTH || dirs >= EXPAND_ALL_MAX_DIRS) {
         truncated = true
         return
@@ -1513,6 +1792,8 @@ function onNodeContextMenu(event: Event, data: TreeNode) {
     y: Math.min(e.clientY, window.innerHeight - 300),
     node: data,
   }
+  // 首次右键时探测可用的系统外部终端，供「在系统终端中打开」子菜单使用
+  void loadExternalTerminals()
   // 菜单项较多时实际高度可能超出预估，渲染后动态修正位置，确保完整显示在视口内
   nextTick(() => {
     const el = document.querySelector<HTMLElement>('.tree-context-menu')
@@ -1529,6 +1810,72 @@ function onNodeContextMenu(event: Event, data: TreeNode) {
 
 function hideContextMenu() {
   contextMenu.value.visible = false
+  externalSubmenu.value = false
+}
+
+/* ========== 外部终端（在系统终端中打开） ========== */
+/** 记忆「上次选择的终端」的存储键（偏好类配置，跨窗口跨重启共用） */
+const EXTERNAL_TERMINAL_KEY = 'md-external-terminal'
+/** 可用外部终端列表（首次右键时探测，同一会话内复用） */
+const externalTerminals = ref<ExternalTerminalOption[]>([])
+/** 用户选择的终端 id，空串表示「自动」 */
+const externalTerminalId = ref(localStorage.getItem(EXTERNAL_TERMINAL_KEY) || '')
+/** 子菜单是否展开 */
+const externalSubmenu = ref(false)
+/** 子菜单向上展开（下方空间不足时） */
+const externalSubmenuUp = ref(false)
+/** 子菜单向左展开（右侧空间不足时） */
+const externalSubmenuLeft = ref(false)
+/** 是否已探测过外部终端 */
+let externalLoaded = false
+
+/** 实际生效的终端 id：记住的终端若已不可用（例如被卸载）则退回自动 */
+const effectiveExternalId = computed(() =>
+  externalTerminals.value.some((item) => item.id === externalTerminalId.value) ? externalTerminalId.value : '',
+)
+/** 菜单项右侧提示：当前实际使用的终端名 */
+const externalTerminalLabel = computed(() => {
+  const id = effectiveExternalId.value
+  if (id) return externalTerminals.value.find((item) => item.id === id)?.name || ''
+  return externalTerminals.value.length ? externalTerminals.value[0].name : ''
+})
+
+/** 加载可用外部终端列表（探测涉及子进程查询，只做一次） */
+async function loadExternalTerminals() {
+  if (externalLoaded || !window.mdAPI?.terminal.externalList) return
+  externalLoaded = true
+  try {
+    const res = await window.mdAPI.terminal.externalList()
+    externalTerminals.value = res?.terminals ?? []
+  } catch {
+    externalTerminals.value = []
+  }
+}
+
+/** 展开 / 收起外部终端子菜单，展开后按可用空间修正子菜单位置 */
+function toggleExternalSubmenu() {
+  externalSubmenu.value = !externalSubmenu.value
+  if (!externalSubmenu.value) return
+  externalSubmenuUp.value = false
+  externalSubmenuLeft.value = false
+  nextTick(() => {
+    const el = document.querySelector<HTMLElement>('.ctx-submenu')
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight - 8) externalSubmenuUp.value = true
+    if (rect.right > window.innerWidth - 8) externalSubmenuLeft.value = true
+  })
+}
+
+/**
+ * 记住用户选择的外部终端
+ * @param id 终端 id，空串表示恢复「自动」（按优先级选第一个可用的）
+ */
+function rememberExternalTerminal(id: string) {
+  externalTerminalId.value = id
+  if (id) localStorage.setItem(EXTERNAL_TERMINAL_KEY, id)
+  else localStorage.removeItem(EXTERNAL_TERMINAL_KEY)
+  externalSubmenu.value = false
 }
 
 /** 新建文件（在目标节点所在目录） */
@@ -1630,6 +1977,7 @@ async function deleteTreeNode(node: TreeNode) {
     currentPath.value = ''
     fileType.value = 'markdown'
     isDirty.value = false
+    largeFileInfo.value = null
     suppressDirty = false
     updateTitle()
     refreshSingleFileTree()
@@ -1648,6 +1996,15 @@ function revealNode(node: TreeNode) {
 async function openWithDefaultNode(node: TreeNode) {
   hideContextMenu()
   const res = await window.mdAPI?.openWithDefault(node.path)
+  if (res && !res.ok && res.error) {
+    ElMessage.error(res.error)
+  }
+}
+
+/** 用系统默认程序打开当前文件（大文件只读预览时使用） */
+async function openCurrentWithDefault() {
+  if (!currentPath.value) return
+  const res = await window.mdAPI?.openWithDefault(currentPath.value)
   if (res && !res.ok && res.error) {
     ElMessage.error(res.error)
   }
@@ -2311,6 +2668,36 @@ async function openTerminalAt(node: TreeNode) {
   await nextTick(() => terminalPanelRef.value?.openAt(cwd))
 }
 
+/**
+ * 右键菜单：在节点所在目录打开系统外部终端
+ *
+ * 内置终端走管道、没有 TTY，跑不了 vim / tmux 这类全屏程序；
+ * 这里改为调用系统自己的终端窗口（Windows Terminal / Ghostty / PowerShell 等），兼容性最好。
+ * @param node 目录树节点（文件则取其所在目录）
+ * @param terminalId 指定终端 id；省略时使用用户上次的选择（未选择则自动取优先级最高的）
+ */
+async function openExternalTerminalAt(node: TreeNode, terminalId?: string) {
+  hideContextMenu()
+  const dir = node.isDirectory ? node.path : dirname(node.path)
+  if (!window.mdAPI?.terminal.openExternal) {
+    ElMessage.warning('当前环境不支持打开外部终端')
+    return
+  }
+  const id = terminalId ?? effectiveExternalId.value
+  const res = await window.mdAPI.terminal.openExternal({ dir, terminalId: id || undefined })
+  if (!res?.ok) ElMessage.error(res?.error || '打开外部终端失败')
+}
+
+/**
+ * 子菜单：记住本次选择的终端并立即用它打开目录
+ * @param node 目录树节点
+ * @param id 终端 id，空串表示恢复自动
+ */
+function chooseExternalTerminal(node: TreeNode, id: string) {
+  rememberExternalTerminal(id)
+  openExternalTerminalAt(node, id)
+}
+
 function onKeydown(e: KeyboardEvent) {
   // F12：随时切换开发者工具（类似浏览器 F12 调试）
   if (e.key === 'F12') {
@@ -2501,6 +2888,16 @@ const viewOptions = [
               @click="exportDocx"
             />
           </el-tooltip>
+          <el-tooltip
+            :content="
+              canExportPdf
+                ? '导出 PDF（矢量，可选中文字；支持 MD / HTML / 文本 / JSON / 图片 / Word）'
+                : '当前文件类型暂不支持导出 PDF'
+            "
+            placement="bottom"
+          >
+            <el-button :icon="Printer" :disabled="!canExportPdf" :loading="exportingPdf" @click="openPdfDialog" />
+          </el-tooltip>
           <el-tooltip :content="scratchTip" placement="bottom">
             <el-button :icon="Notebook" :type="isScratchFile ? 'primary' : ''" @click="openScratch" />
           </el-tooltip>
@@ -2545,6 +2942,11 @@ const viewOptions = [
 
         <!-- 工具集：JSON 格式化 / Base64 / 时间戳 / 哈希等通用小工具 -->
         <ToolLauncher />
+
+        <!-- 主题：浅色 / 深色快捷切换（「设置 → 外观」中可设为跟随系统） -->
+        <el-tooltip :content="isDark ? '切换为浅色主题' : '切换为深色主题'" placement="bottom">
+          <el-button :icon="isDark ? Sunny : Moon" @click="toggleTheme()" />
+        </el-tooltip>
 
         <!-- 设置：外观 / 图床 / PlantUML / AI / 文件关联等统一入口 -->
         <el-tooltip content="设置（外观 / 图床 / PlantUML / AI / 文件关联）" placement="bottom">
@@ -2631,7 +3033,12 @@ const viewOptions = [
             </el-tooltip>
           </div>
         </div>
-        <div v-if="openedDir || currentPath" class="sidebar-tree">
+        <div
+          v-if="openedDir || currentPath"
+          class="sidebar-tree"
+          @dragover.prevent="onTreeRootDragOver"
+          @drop.prevent="onTreeRootDrop"
+        >
           <el-tree
             ref="treeRef"
             :key="treeKey"
@@ -2650,8 +3057,12 @@ const viewOptions = [
               <span
                 v-overflow-tip="data.name"
                 class="tree-node"
+                :class="{ 'is-drop-target': dropTargetPath === normPath(data.path) }"
                 draggable="true"
                 @dragstart.stop="onTreeNodeDragStart($event, data)"
+                @dragover.stop.prevent="onTreeDragOver($event, data)"
+                @dragleave="onTreeDragLeave"
+                @drop.stop.prevent="onTreeNodeDrop($event, data)"
               >
                 <FileIcon
                   :ext="data.ext"
@@ -2792,6 +3203,9 @@ const viewOptions = [
           ref="textEditorRef"
           v-else-if="activeFileType === 'text'"
           v-model="content"
+          :readonly="!!largeFileInfo?.truncated"
+          :large-file="largeFileInfo"
+          @open-external="openCurrentWithDefault"
           @ask-ai="onAskAi"
           @generate-diagram="onGenerateDiagram"
         />
@@ -2904,6 +3318,46 @@ const viewOptions = [
             <el-icon><TerminalIcon /></el-icon>
             <span>在此处打开命令行</span>
           </div>
+          <!-- 有多个系统终端可选时提供子菜单；只有一个时直接打开 -->
+          <div
+            v-if="externalTerminals.length > 1"
+            class="ctx-item ctx-item-submenu"
+            @click.stop="toggleExternalSubmenu"
+            @mouseenter="!externalSubmenu && toggleExternalSubmenu()"
+            @mouseleave="externalSubmenu = false"
+          >
+            <el-icon><Monitor /></el-icon>
+            <span>在系统终端中打开</span>
+            <span v-if="externalTerminalLabel" class="ctx-sub-hint">{{ externalTerminalLabel }}</span>
+            <el-icon class="ctx-arrow"><ArrowRight /></el-icon>
+            <div
+              v-if="externalSubmenu"
+              class="ctx-submenu"
+              :class="{ 'is-up': externalSubmenuUp, 'is-left': externalSubmenuLeft }"
+            >
+              <div
+                class="ctx-item"
+                :class="{ 'is-active': !effectiveExternalId }"
+                @click.stop="chooseExternalTerminal(contextMenu.node, '')"
+              >
+                <span>自动（{{ externalTerminals[0].name }}）</span>
+              </div>
+              <div
+                v-for="item in externalTerminals"
+                :key="item.id"
+                class="ctx-item"
+                :class="{ 'is-active': effectiveExternalId === item.id }"
+                @click.stop="chooseExternalTerminal(contextMenu.node, item.id)"
+              >
+                <span>{{ item.name }}</span>
+                <el-icon v-if="effectiveExternalId === item.id" class="ctx-check"><Check /></el-icon>
+              </div>
+            </div>
+          </div>
+          <div v-else class="ctx-item" @click="openExternalTerminalAt(contextMenu.node)">
+            <el-icon><Monitor /></el-icon>
+            <span>在系统终端中打开</span>
+          </div>
           <div class="ctx-sep" />
           <div v-if="!contextMenu.node.isDirectory" class="ctx-item" @click="sendToAi(contextMenu.node)">
             <el-icon><MagicStick /></el-icon>
@@ -2938,6 +3392,8 @@ const viewOptions = [
       v-model="settingsVisible"
       v-model:view-mode="viewMode"
       v-model:code-theme="codeTheme"
+      v-model:preview-font="previewFont"
+      v-model:source-font="sourceFont"
       @open-ai-log="openAiLogFromSettings"
     />
 
@@ -2950,6 +3406,15 @@ const viewOptions = [
       @apply-content="onAiApplyContent"
       @apply-metadata="onAiApplyMetadata"
       @insert-outline="onAiInsertOutline"
+    />
+
+    <!-- 导出 PDF 设置（纸张 / 方向 / 页边距 / 内容缩放 / 页码） -->
+    <PdfExportDialog
+      v-model="pdfDialogVisible"
+      :kind="pdfDialogKind"
+      :file-name="pdfDialogFileName"
+      :dirty="isDirty"
+      @confirm="handlePdfConfirm"
     />
 
     <!-- AI 调用日志（查看每次大模型请求的参数、响应与 Token 用量） -->
@@ -2983,7 +3448,7 @@ const viewOptions = [
   padding: 0 16px;
   height: 52px;
   min-height: 52px;
-  background: #fff;
+  background: var(--bg-color-white);
   border-bottom: 1px solid var(--border-color-light);
   user-select: none;
   -webkit-app-region: drag;
@@ -3082,7 +3547,7 @@ const viewOptions = [
   border: 1px solid var(--color-primary);
   border-radius: 4px;
   outline: none;
-  background: #fff;
+  background: var(--bg-color-white);
   color: var(--text-color-primary);
 }
 
@@ -3106,7 +3571,7 @@ const viewOptions = [
   flex-shrink: 0;
   border: 1px solid var(--border-color-lighter);
   border-radius: 8px;
-  background: #fff;
+  background: var(--bg-color-white);
   color: var(--text-color-secondary);
   cursor: pointer;
   font-size: 18px;
@@ -3128,7 +3593,7 @@ const viewOptions = [
   width: 260px;
   min-width: 180px;
   max-width: 480px;
-  background: #fff;
+  background: var(--bg-color-white);
   border: 1px solid var(--border-color-lighter);
   border-radius: 8px;
   overflow: hidden;
@@ -3341,6 +3806,13 @@ const viewOptions = [
   min-width: 0;
 }
 
+/* 系统文件拖入目录树时，悬停节点的放置高亮 */
+.tree-node.is-drop-target {
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  border-radius: 4px;
+}
+
 .tree-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3412,7 +3884,7 @@ const viewOptions = [
   padding: 0 16px;
   height: 30px;
   min-height: 30px;
-  background: #fff;
+  background: var(--bg-color-white);
   border-top: 1px solid var(--border-color-light);
   font-size: 12px;
   color: var(--text-color-secondary);
@@ -3438,7 +3910,7 @@ const viewOptions = [
   z-index: 3000;
   width: 190px;
   padding: 6px;
-  background: #fff;
+  background: var(--bg-color-white);
   border: 1px solid var(--border-color-light);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
@@ -3486,6 +3958,61 @@ const viewOptions = [
   height: 1px;
   margin: 4px 8px;
   background: var(--border-color-lighter);
+}
+
+/* 外部终端子菜单：主菜单项作为定位基准 */
+.ctx-item-submenu {
+  position: relative;
+}
+
+.ctx-sub-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-color-secondary);
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-arrow {
+  flex-shrink: 0;
+  margin-left: -4px;
+  font-size: 12px;
+  color: var(--text-color-secondary);
+}
+
+.ctx-submenu {
+  position: absolute;
+  top: -6px;
+  left: 100%;
+  z-index: 1;
+  width: 170px;
+  padding: 6px;
+  background: var(--bg-color-white);
+  border: 1px solid var(--border-color-light);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+
+/* 下方 / 右侧空间不足时翻转方向 */
+.ctx-submenu.is-up {
+  top: auto;
+  bottom: -6px;
+}
+
+.ctx-submenu.is-left {
+  left: auto;
+  right: 100%;
+}
+
+.ctx-item.is-active {
+  color: var(--color-primary);
+}
+
+.ctx-check {
+  margin-left: auto;
+  color: var(--color-primary);
 }
 </style>
 

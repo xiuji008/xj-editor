@@ -1,6 +1,7 @@
 import {
   Clock,
   Connection,
+  Cpu,
   Document,
   Key,
   MagicStick,
@@ -29,6 +30,7 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   { key: 'crypto', name: '哈希加密', icon: Key },
   { key: 'time', name: '时间日期', icon: Clock },
   { key: 'generator', name: '生成器', icon: MagicStick },
+  { key: 'dev', name: '开发辅助', icon: Cpu },
 ]
 
 /**

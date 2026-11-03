@@ -856,6 +856,160 @@ ipcMain.handle('dialog:exportHtml', async (event, { html, defaultPath }) => {
   return { canceled: false, filePath: result.filePath }
 })
 
+/* ==================== 导出 PDF ==================== */
+
+/** printToPDF 支持的内置纸张尺寸白名单 */
+const PDF_PAGE_SIZES = new Set(['A3', 'A4', 'A5', 'Letter'])
+/** 自定义纸张的毫米边界（太小无法排版，太大浏览器会拒绝） */
+const PDF_CUSTOM_MIN_MM = 50
+const PDF_CUSTOM_MAX_MM = 1200
+
+/** 把任意输入钳制到 [min, max] 的有限数字，非法值回退 */
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value)
+  if (!Number.isFinite(num)) return fallback
+  return Math.min(max, Math.max(min, num))
+}
+
+/**
+ * 打印基础样式：所有导出都会注入。
+ * sourceFile 模式（HTML / 图片直接打印源文件）尤其需要，避免滚动条、深色背景、
+ * 默认外边距混进 PDF。
+ */
+const PRINT_BASE_CSS = `
+html, body { background: #fff !important; }
+body { margin: 0 !important; }
+* { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+::-webkit-scrollbar { display: none !important; }
+`
+
+/**
+ * 打印前等待页面就绪：字体加载完成 + 所有图片解码完成 + 两帧布局稳定。
+ * 不等待会出现 PDF 里图片空白、公式字体未生效、图表尺寸未收敛等问题。
+ */
+const PDF_READY_SCRIPT = `(async () => {
+  try { if (document.fonts && document.fonts.ready) await document.fonts.ready } catch (e) {}
+  try {
+    await Promise.all(Array.from(document.images).map((img) =>
+      img.decode ? img.decode().catch(() => {}) : Promise.resolve()))
+  } catch (e) {}
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+  return true
+})()`
+
+/**
+ * 组装 printToPDF 参数。
+ * 纸张尺寸与页边距由主进程统一控制（不让 CSS 的 @page 参与，避免两处口径打架）；
+ * 页边距单位换算为英寸，页码页脚额外预留底部空间。
+ */
+function buildPdfPrintOptions(raw) {
+  const o = raw && typeof raw === 'object' ? raw : {}
+  const marginMm = clampNumber(o.marginMm, 0, 40, 14)
+  const marginIn = marginMm / 25.4
+  const showPageNumber = o.showPageNumber !== false
+  const landscape = !!o.landscape
+
+  // 自定义宽度/高度（毫米）优先；自定义尺寸自行交换宽高，避免与 landscape 参数双重生效
+  const customWidthMm = clampNumber(o.customWidthMm, PDF_CUSTOM_MIN_MM, PDF_CUSTOM_MAX_MM, 0)
+  const customHeightMm = clampNumber(o.customHeightMm, PDF_CUSTOM_MIN_MM, PDF_CUSTOM_MAX_MM, 0)
+  let pageSize
+  let useLandscape = landscape
+  if (customWidthMm && customHeightMm) {
+    const w = (landscape ? customHeightMm : customWidthMm) / 25.4
+    const h = (landscape ? customWidthMm : customHeightMm) / 25.4
+    pageSize = { width: w, height: h }
+    useLandscape = false
+  } else {
+    pageSize = PDF_PAGE_SIZES.has(o.pageSize) ? o.pageSize : 'A4'
+  }
+
+  const footerHtml =
+    '<div style="width:100%;padding:0 12mm;font-size:8px;color:#909399;text-align:center;' +
+    'font-family:\'Microsoft YaHei\',\'微软雅黑\',sans-serif;">' +
+    '第 <span class="pageNumber"></span> 页 / 共 <span class="totalPages"></span> 页</div>'
+  return {
+    pageSize,
+    landscape: useLandscape,
+    printBackground: true,
+    displayHeaderFooter: showPageNumber,
+    headerTemplate: '<div></div>',
+    footerTemplate: showPageNumber ? footerHtml : '<div></div>',
+    margins: {
+      top: marginIn,
+      // 页脚区域需要独立的底部留白，否则页码会压在正文最后一行上
+      bottom: marginIn + (showPageNumber ? 0.28 : 0),
+      left: marginIn,
+      right: marginIn,
+    },
+  }
+}
+
+/**
+ * 导出 PDF：渲染进程生成「打印用 HTML」（已内联 KaTeX 字体、图片换 mdlocal 绝对路径），
+ * 主进程写入临时文件后用隐藏窗口的 Chromium 打印成矢量 PDF，再落盘到用户选择的位置。
+ *
+ * 用隐藏窗口而不是当前窗口打印：避免把工具栏 / 侧边栏 / 主题背景一并打进 PDF。
+ */
+ipcMain.handle('dialog:exportPdf', async (event, { html, sourceFile, injectCss, defaultPath, options } = {}) => {
+  const hasHtml = typeof html === 'string' && !!html.trim()
+  const hasSource = typeof sourceFile === 'string' && !!sourceFile.trim()
+  if (!hasHtml && !hasSource) {
+    return { canceled: false, error: '没有可导出的内容' }
+  }
+  const result = await dialog.showSaveDialog(winOfEvent(event), {
+    title: '导出为 PDF',
+    defaultPath: defaultPath || '未命名.pdf',
+    filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
+  })
+  if (result.canceled || !result.filePath) return { canceled: true }
+
+  // 只有 html 模式需要落临时文件；sourceFile 模式直接打印源文件（相对资源天然可用）
+  const tmpPath = hasHtml
+    ? path.join(app.getPath('temp'), `xj-print-${process.pid}-${Date.now()}.html`)
+    : ''
+  /** @type {Electron.BrowserWindow | null} */
+  let printer = null
+  try {
+    if (hasHtml) await fsp.writeFile(tmpPath, html, 'utf-8')
+    printer = new BrowserWindow({
+      show: false,
+      width: 900,
+      height: 1200,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        // 隐藏窗口默认会被节流，导致字体 / 图片 / rAF 等待变慢
+        backgroundThrottling: false,
+      },
+    })
+    // 文档里的外链不应在打印窗口里开新窗口
+    printer.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    printer.webContents.on('will-navigate', (e) => e.preventDefault())
+    await printer.loadFile(hasHtml ? tmpPath : sourceFile)
+    await printer.webContents.insertCSS(PRINT_BASE_CSS)
+    if (typeof injectCss === 'string' && injectCss.trim()) {
+      await printer.webContents.insertCSS(injectCss)
+    }
+    try {
+      await Promise.race([
+        printer.webContents.executeJavaScript(PDF_READY_SCRIPT, true),
+        new Promise((resolve) => setTimeout(resolve, 15000)),
+      ])
+    } catch {
+      // 页面脚本异常不应阻断导出，交给 printToPDF 处理
+    }
+    const pdf = await printer.webContents.printToPDF(buildPdfPrintOptions(options))
+    await fsp.writeFile(result.filePath, pdf)
+    return { canceled: false, filePath: result.filePath }
+  } catch (err) {
+    return { canceled: false, error: err && err.message ? err.message : String(err) }
+  } finally {
+    if (printer && !printer.isDestroyed()) printer.destroy()
+    if (tmpPath) fsp.unlink(tmpPath).catch(() => {})
+  }
+})
+
 // 导出 Word（.docx）：二进制由渲染进程生成（docx 库），主进程只负责落盘
 ipcMain.handle('dialog:exportDocx', async (event, { data, defaultPath }) => {
   const result = await dialog.showSaveDialog(winOfEvent(event), {
@@ -1362,6 +1516,15 @@ ipcMain.handle('shell:reveal', (_event, { filePath }) => {
 // 用系统默认程序打开
 ipcMain.handle('shell:openPath', async (_event, { filePath }) => {
   return { ok: true, error: await shell.openPath(filePath) }
+})
+
+// 用系统默认浏览器打开链接（Markdown 预览中的 http/https/mailto/tel 链接）
+ipcMain.handle('shell:openUrl', (_event, { url }) => {
+  if (!/^(https?:|mailto:|tel:)/i.test(String(url || ''))) {
+    return { ok: false, error: '不支持的链接协议' }
+  }
+  shell.openExternal(url)
+  return { ok: true }
 })
 
 /* ==================== IPC：系统剪贴板与文件拖拽 ==================== */
@@ -2335,3 +2498,20 @@ ipcMain.handle('terminal:killAll', () => terminal.killAll())
 
 // 命令补全：按当前输入与工作目录返回文件 / 目录 / 命令候选
 ipcMain.handle('terminal:complete', async (_event, payload = {}) => terminal.complete(payload))
+
+// 列出可用的系统外部终端（Windows Terminal / Ghostty / PowerShell 等）
+ipcMain.handle('terminal:externalList', () => terminal.listExternalTerminals())
+
+// 在系统自己的终端窗口中打开指定目录：拥有真实 TTY，可运行 vim / tmux 等全屏程序
+ipcMain.handle('terminal:openExternal', async (_event, payload = {}) =>
+  terminal.openExternalTerminal(payload),
+)
+
+/* ==================== IPC：进程管理（按端口 / 服务名查进程并结束） ==================== */
+const processManager = require('./process.cjs')
+
+// 查询进程：支持按端口 / 进程名 / PID / 命令行关键字过滤，并附带端口占用与启动命令行
+ipcMain.handle('proc:search', async (_event, payload = {}) => processManager.search(payload))
+
+// 结束进程：tree 为 true 时连同子进程一起结束（系统关键进程与自身进程会被拒绝）
+ipcMain.handle('proc:kill', async (_event, payload = {}) => processManager.kill(payload))

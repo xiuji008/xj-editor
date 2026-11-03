@@ -42,8 +42,12 @@
             ref="panelRef"
             :view-mode="viewMode"
             :code-theme="codeTheme"
+            :preview-font="previewFont"
+            :source-font="sourceFont"
             @update:view-mode="onViewModeChange"
             @update:code-theme="onCodeThemeChange"
+            @update:preview-font="onPreviewFontChange"
+            @update:source-font="onSourceFontChange"
           />
           <ImageHostingPanel v-else-if="activeKey === 'image'" ref="panelRef" />
           <PlantUmlPanel v-else-if="activeKey === 'plantuml'" ref="panelRef" />
@@ -73,6 +77,7 @@ import PlantUmlPanel from './PlantUmlPanel.vue'
 import AiConfigPanel from './AiConfigPanel.vue'
 import QuickAiPanel from './QuickAiPanel.vue'
 import FileAssociationsPanel from './FileAssociationsPanel.vue'
+import { DEFAULT_PREVIEW_FONT, DEFAULT_SOURCE_FONT } from '../../utils/fonts'
 
 /** 视图模式：编辑 / 分屏 / 预览 */
 type ViewMode = 'edit' | 'split' | 'preview'
@@ -102,27 +107,37 @@ const props = withDefaults(defineProps<{
   viewMode: ViewMode
   /** 代码高亮主题 */
   codeTheme?: string
+  /** 预览区正文字体 */
+  previewFont?: string
+  /** 源码编辑区字体 */
+  sourceFont?: string
 }>(), {
   codeTheme: '',
+  previewFont: DEFAULT_PREVIEW_FONT,
+  sourceFont: DEFAULT_SOURCE_FONT,
 })
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
   (e: 'update:viewMode', value: ViewMode): void
   (e: 'update:codeTheme', value: string): void
+  (e: 'update:previewFont', value: string): void
+  (e: 'update:sourceFont', value: string): void
   (e: 'open-ai-log'): void
 }>()
 
 /** 转发外观面板的即时修改（无需点保存，立即生效） */
 const onViewModeChange = (value: ViewMode) => emit('update:viewMode', value)
 const onCodeThemeChange = (value: string) => emit('update:codeTheme', value)
+const onPreviewFontChange = (value: string) => emit('update:previewFont', value)
+const onSourceFontChange = (value: string) => emit('update:sourceFont', value)
 
 /** 分类导航：图片 / PlantUML / AI / 文件关联等原工具栏入口统一收在此处 */
 const categories: SettingsCategory[] = [
   {
     key: 'appearance',
     label: '外观',
-    desc: '默认视图模式与 Markdown 预览的代码高亮主题。',
+    desc: '应用主题（浅色 / 深色 / 跟随系统）、默认视图模式、显示字体与 Markdown 预览的代码高亮主题。',
     icon: Brush,
     savable: false,
   },

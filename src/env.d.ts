@@ -76,6 +76,26 @@ interface MdAPI {
     filters?: Array<{ name: string; extensions: string[] }>
   }) => Promise<{ canceled: boolean; filePath?: string }>
   exportHtml: (args: { html: string; defaultPath?: string }) => Promise<{ canceled: boolean; filePath?: string }>
+  /**
+   * 导出 PDF。
+   * html 与 sourceFile 二选一：前者是渲染好的打印用 HTML，后者直接打印源文件
+   * （HTML / 图片，相对资源天然可用）；injectCss 为打印前追加的样式。
+   */
+  exportPdf: (args: {
+    html?: string
+    sourceFile?: string
+    injectCss?: string
+    defaultPath?: string
+    options?: {
+      pageSize?: 'A3' | 'A4' | 'A5' | 'Letter'
+      /** 自定义纸张宽高（毫米），与 pageSize 互斥、优先级更高 */
+      customWidthMm?: number
+      customHeightMm?: number
+      landscape?: boolean
+      marginMm?: number
+      showPageNumber?: boolean
+    }
+  }) => Promise<{ canceled: boolean; filePath?: string; error?: string }>
   /** 导出 Word：data 为渲染进程生成的 docx 二进制 */
   exportDocx: (args: {
     data: Uint8Array
@@ -145,6 +165,8 @@ interface MdAPI {
   // 系统
   revealFile: (filePath: string) => void
   openWithDefault: (filePath: string) => Promise<{ ok: boolean; error?: string }>
+  /** 用系统默认浏览器打开链接（Markdown 预览中的超链接） */
+  openUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   // 系统剪贴板 / 系统拖拽（可复制到桌面等系统位置）
   writeFilesToClipboard: (paths: string[]) => Promise<{ ok: boolean; count?: number; error?: string }>
   startFileDrag: (paths: string[]) => void
@@ -208,6 +230,102 @@ interface MdAPI {
   commitSpec: CommitSpecApi
   // 快捷 AI 动作（内置生成类型与提示词，可定制修改）
   quickAi: QuickAiApi
+  // 进程管理（按端口 / 服务名查询进程并结束）
+  process: ProcessApi
+}
+
+/** 进程占用的一个端口 */
+interface ProcPortItem {
+  /** 协议（TCP / UDP） */
+  proto: string
+  /** 端口号 */
+  port: number
+  /** 本地地址，如 0.0.0.0:8080 */
+  local: string
+  /** 远端地址 */
+  remote: string
+  /** 连接状态，如 LISTENING；UDP 为空 */
+  state: string
+  /** 是否为监听中（即端口被该进程占用） */
+  listening: boolean
+}
+
+/** 进程条目 */
+interface ProcItem {
+  /** 进程 ID */
+  pid: number
+  /** 进程名，如 java.exe */
+  name: string
+  /** 可执行文件路径（可能为空） */
+  exe: string
+  /** 启动命令行（可能为空，超长已截断） */
+  commandLine: string
+  /** 内存占用（KB） */
+  memory: number
+  /** 占用的端口列表 */
+  ports: ProcPortItem[]
+  /** 是否存在监听中的端口 */
+  listening: boolean
+  /** 命中方式：all / port / pid / name / cmdline */
+  matchedBy: string
+  /** 是否为受保护进程（系统关键进程 / 本应用自身），禁止结束 */
+  critical: boolean
+}
+
+/** 进程查询结果 */
+interface ProcSearchResult {
+  ok: boolean
+  /** 操作系统标识，如 win32 */
+  platform?: string
+  /** 命中的进程条目 */
+  items?: ProcItem[]
+  /** 扫描到的进程总数 */
+  scanned?: number
+  /** 命中的进程数 */
+  total?: number
+  /** 查询耗时（毫秒） */
+  elapsedMs?: number
+  /** 本次是否取到了命令行（决定能否按启动参数搜索） */
+  cmdlineAvailable?: boolean
+  error?: string
+  message?: string
+}
+
+/** 结束进程结果 */
+interface ProcKillResult {
+  ok: boolean
+  /** 进程 ID */
+  pid?: number
+  /** 成功提示 */
+  message?: string
+  /** 失败原因 */
+  error?: string
+}
+
+/** 进程管理能力接口（window.mdAPI.process） */
+interface ProcessApi {
+  /** 按关键字查询进程 */
+  search: (payload: {
+    /** 关键字：端口 / 进程名 / PID / 启动参数片段 */
+    keyword?: string
+    /** 匹配模式：auto 自动 / port 端口 / name 进程名 / pid / cmdline 命令行 */
+    mode?: string
+    /** 是否采集启动命令行（关闭时更快，但搜不到 jar 包名） */
+    deep?: boolean
+    /** 是否只返回占用端口的进程 */
+    onlyPorts?: boolean
+    /** 是否忽略命令行缓存重新采集 */
+    refresh?: boolean
+  }) => Promise<ProcSearchResult>
+  /** 结束进程 */
+  kill: (payload: {
+    /** 进程 ID */
+    pid: number
+    /** 进程名，用于拦截系统关键进程 */
+    name?: string
+    /** 是否连同子进程一起结束 */
+    tree?: boolean
+  }) => Promise<ProcKillResult>
 }
 
 /** 终端 shell 类型：决定提示符样式与换行符 */
@@ -264,8 +382,30 @@ interface TerminalCompleteResult {
   error?: string
 }
 
+/** 可选系统外部终端信息 */
+interface ExternalTerminalOption {
+  /** 终端标识，如 wt / ghostty / powershell */
+  id: string
+  /** 展示名，如 Windows Terminal */
+  name: string
+}
+
 /** 终端能力接口（window.mdAPI.terminal） */
 interface TerminalApi {
+  /** 列出可用的系统外部终端（另开真实终端窗口，拥有 TTY） */
+  externalList: () => Promise<{
+    ok: boolean
+    terminals?: ExternalTerminalOption[]
+    defaultId?: string
+  }>
+  /** 在系统外部终端中打开目录（terminalId 省略时取优先级最高的可用终端） */
+  openExternal: (args: { dir: string; terminalId?: string }) => Promise<{
+    ok: boolean
+    name?: string
+    id?: string
+    dir?: string
+    error?: string
+  }>
   shells: () => Promise<{ ok: boolean; shells?: ShellOption[]; defaultShellId?: string; error?: string }>
   start: (args: { cwd?: string; shellId?: string }) => Promise<TerminalStartResult>
   write: (args: { id: string; data: string }) => void

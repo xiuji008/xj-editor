@@ -206,6 +206,12 @@ import { basename } from '../../utils/fileUtils'
 const PAGE_GAP = 16
 /** 页面区上下留白（CSS 像素） */
 const PAGE_PADDING = 16
+/**
+ * 自适应缩放上限。
+ * A4 页面在宽面板里按「适应宽度」会被放大到 200% 以上（字号看着虚大），
+ * 因此自适应最多到 100%，需要更大时用工具栏 +/- 手动放大。
+ */
+const MAX_FIT_SCALE = 1
 /** 进度保存防抖时间（毫秒） */
 const SAVE_DELAY = 800
 
@@ -272,9 +278,9 @@ const scale = computed(() => {
   if (!sizes.value.length || !viewportSize.value.width) return 1
   const maxWidth = Math.max(...sizes.value.map((s) => s.w))
   const fitWidth = (viewportSize.value.width - PAGE_PADDING * 2) / maxWidth
-  if (scaleMode.value === 'fit-width') return fitWidth
+  if (scaleMode.value === 'fit-width') return Math.min(fitWidth, MAX_FIT_SCALE)
   const fitHeight = (viewportSize.value.height - PAGE_PADDING * 2) / Math.max(sizes.value[0].h, 1)
-  return Math.min(fitWidth, fitHeight)
+  return Math.min(fitWidth, fitHeight, MAX_FIT_SCALE)
 })
 
 /** 页面布局：逐页累加得到每页在滚动容器中的偏移与渲染尺寸 */
@@ -786,7 +792,7 @@ watch(() => props.filePath, () => void openDocument())
   flex: 1;
   min-width: 0;
   overflow: auto;
-  background: #f0f2f5;
+  background: var(--bg-color-page);
 }
 
 .pdf-pages {

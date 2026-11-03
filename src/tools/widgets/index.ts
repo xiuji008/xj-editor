@@ -1,4 +1,4 @@
-import { Clock, Connection, Document, Key } from '@element-plus/icons-vue'
+import { Clock, Connection, Cpu, Document, Key } from '@element-plus/icons-vue'
 import { registerTools } from '../registry'
 import type { ToolDefinition } from '../types'
 
@@ -46,6 +46,17 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
     keywords: ['timestamp', '时间戳', '日期', 'unix', 'iso', 'utc'],
     component: () => import('./TimestampConverter.vue'),
     order: 40,
+  },
+  {
+    id: 'process-manager',
+    name: '进程管理',
+    description: '按端口号 / 服务名 / PID 查进程并一键结束，专治「端口被占用」',
+    category: 'dev',
+    icon: Cpu,
+    keywords: ['进程', '端口', '占用', 'taskkill', 'netstat', 'pid', 'kill', 'process', 'port', 'java'],
+    component: () => import('./ProcessManager.vue'),
+    order: 50,
+    badge: 'new',
   },
 ]
 

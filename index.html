@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Markdown 编辑器</title>
+    <script>
+      // 尽早应用深浅主题，避免首屏闪烁（存储键与 src/composables/useTheme.ts 保持一致）
+      ;(function () {
+        try {
+          var t = localStorage.getItem('md-app-theme') || 'auto'
+          var dark =
+            t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) document.documentElement.classList.add('dark')
+        } catch (e) {
+          /* 忽略 */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

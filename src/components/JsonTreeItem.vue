@@ -604,7 +604,7 @@ function emitChange() {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-color-primary);
-  background: #fff;
+  background: var(--bg-color-white);
 }
 
 .jti-key-input {

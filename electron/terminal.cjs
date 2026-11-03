@@ -669,6 +669,221 @@ function complete(payload = {}) {
   }
 }
 
+/* ==================== 外部终端（在系统自己的终端窗口中打开） ==================== */
+
+/** 外部终端探测结果缓存 */
+let externalCache = null
+
+/**
+ * 定位 Windows Terminal：wt.exe 是 MSIX 应用执行别名（%LOCALAPPDATA%\Microsoft\WindowsApps），
+ * 部分机器无法直接用 CreateProcess 启动，因此额外准备了 cmd start 的兜底方式。
+ * @returns {string} wt.exe 绝对路径，未安装时返回空串
+ */
+function resolveWindowsTerminal() {
+  const appsDir = process.env.LOCALAPPDATA || ''
+  if (appsDir) {
+    const candidate = path.join(appsDir, 'Microsoft', 'WindowsApps', 'wt.exe')
+    if (fs.existsSync(candidate)) return candidate
+  }
+  return which('wt.exe')
+}
+
+/**
+ * 构造外部终端的启动描述
+ *
+ * Windows 关键点：控制台类终端（cmd / PowerShell / Git Bash）不能以 detached 方式直接 spawn——
+ * detached 对应 DETACHED_PROCESS，系统不会为它分配控制台，stdin 拿不到输入会立刻退出（表现为窗口闪退）。
+ * 因此统一经 `cmd /C start "" <target> <args>` 启动：由 start 负责创建一个真正的控制台窗口。
+ * wt.exe 是 MSIX 应用执行别名，直接 CreateProcess 也可能失败，走 start 同样更稳。
+ * @param {string} target 目标终端可执行文件（可为命令名，交给系统解析）
+ * @param {string[]} args 传给目标终端的参数
+ * @returns {{file: string, args: string[]}} 实际要启动的文件与参数
+ */
+function startInfo(target, args) {
+  if (IS_WIN) return { file: process.env.ComSpec || 'cmd.exe', args: ['/C', 'start', '', target, ...args] }
+  return { file: target, args }
+}
+
+/**
+ * 外部终端定义表（按优先级排序，取第一个可用的）
+ *
+ * 与内置终端的区别：这里不走管道，而是让系统终端程序自己开一个窗口，
+ * 因此拥有真实 TTY，vim / less / tmux / Claude Code 等全屏程序都能正常运行。
+ * - resolve / file：用于判定该终端是否存在（trustFile 表示目标为命令名，跳过存在性校验）
+ * - spawn：构造实际启动描述（第二个参数为 resolve 到的绝对路径）
+ */
+const EXTERNAL_TERMINALS = [
+  {
+    id: 'wt',
+    name: 'Windows Terminal',
+    platforms: ['win32'],
+    resolve: () => resolveWindowsTerminal(),
+    spawn: (dir) => startInfo('wt', ['-d', dir]),
+  },
+  {
+    id: 'ghostty',
+    name: 'Ghostty',
+    platforms: ['win32', 'darwin', 'linux'],
+    resolve: () => which(IS_WIN ? 'ghostty.exe' : 'ghostty'),
+    spawn: (dir, file) => startInfo(file, [`--working-directory=${dir}`]),
+  },
+  {
+    id: 'pwsh',
+    name: 'PowerShell 7',
+    platforms: ['win32'],
+    resolve: () => which('pwsh.exe'),
+    spawn: (dir, file) => startInfo(file, ['-NoLogo', '-NoExit']),
+  },
+  {
+    id: 'powershell',
+    name: 'PowerShell',
+    platforms: ['win32'],
+    resolve: () => (fs.existsSync(WIN_PS5_PATH) ? WIN_PS5_PATH : which('powershell.exe')),
+    spawn: (dir, file) => startInfo(file, ['-NoLogo', '-NoExit']),
+  },
+  {
+    id: 'cmd',
+    name: '命令提示符',
+    platforms: ['win32'],
+    trustFile: true,
+    file: () => process.env.ComSpec || 'cmd.exe',
+    spawn: (dir, file) => startInfo(file, ['/K']),
+  },
+  {
+    id: 'gitbash',
+    name: 'Git Bash',
+    platforms: ['win32'],
+    resolve: () => findGitBash(),
+    spawn: (dir, file) => startInfo(file, []),
+  },
+  {
+    id: 'iterm',
+    name: 'iTerm',
+    platforms: ['darwin'],
+    trustFile: true,
+    file: () => (fs.existsSync('/Applications/iTerm.app') ? 'open' : ''),
+    spawn: (dir) => ({ file: 'open', args: ['-a', 'iTerm', dir] }),
+  },
+  {
+    id: 'terminalapp',
+    name: 'Terminal',
+    platforms: ['darwin'],
+    trustFile: true,
+    file: () => (fs.existsSync('/Applications/Utilities/Terminal.app') ? 'open' : ''),
+    spawn: (dir) => ({ file: 'open', args: ['-a', 'Terminal', dir] }),
+  },
+  // Linux：各家终端模拟器的「指定工作目录」参数不统一，逐个列出
+  {
+    id: 'gnome-terminal',
+    name: 'GNOME Terminal',
+    platforms: ['linux'],
+    resolve: () => which('gnome-terminal'),
+    spawn: (dir, file) => ({ file, args: ['--working-directory', dir] }),
+  },
+  {
+    id: 'konsole',
+    name: 'Konsole',
+    platforms: ['linux'],
+    resolve: () => which('konsole'),
+    spawn: (dir, file) => ({ file, args: ['--workdir', dir] }),
+  },
+  {
+    id: 'xfce4-terminal',
+    name: 'Xfce Terminal',
+    platforms: ['linux'],
+    resolve: () => which('xfce4-terminal'),
+    spawn: (dir, file) => ({ file, args: ['--working-directory', dir] }),
+  },
+  {
+    id: 'alacritty',
+    name: 'Alacritty',
+    platforms: ['linux', 'darwin'],
+    resolve: () => which('alacritty'),
+    spawn: (dir, file) => ({ file, args: ['--working-directory', dir] }),
+  },
+  {
+    id: 'kitty',
+    name: 'Kitty',
+    platforms: ['linux', 'darwin'],
+    resolve: () => which('kitty'),
+    spawn: (dir, file) => ({ file, args: ['--directory', dir] }),
+  },
+  {
+    id: 'x-terminal-emulator',
+    name: '系统默认终端',
+    platforms: ['linux'],
+    resolve: () => which('x-terminal-emulator'),
+    spawn: (dir, file) => ({ file, args: [] }),
+  },
+]
+
+/**
+ * 探测当前系统可用的外部终端（结果缓存）
+ * @returns {Array<{id: string, name: string, spawn: Function}>} 外部终端列表
+ */
+function detectExternalTerminals() {
+  if (externalCache) return externalCache
+  const platform = process.platform
+  const list = []
+  for (const item of EXTERNAL_TERMINALS) {
+    if (item.platforms && !item.platforms.includes(platform)) continue
+    const resolver = item.file || item.resolve
+    const file = (resolver ? resolver() : '') || ''
+    if (!file) continue
+    // trustFile：目标为命令名或系统 open 命令，跳过存在性校验
+    if (!item.trustFile && !fs.existsSync(file)) continue
+    list.push({ id: item.id, name: item.name, spawn: (dir) => item.spawn(dir, file) })
+  }
+  externalCache = list
+  return list
+}
+
+/**
+ * 启动外部进程：脱离本进程独立运行（unref 后主进程退出不影响它）
+ *
+ * 注意：这里绝不能设置 windowsHide，否则终端窗口会被隐藏。
+ * @param {string} file 可执行文件
+ * @param {string[]} args 参数
+ * @param {string} cwd 工作目录
+ */
+function launchExternal(file, args, cwd) {
+  try {
+    const proc = spawn(file, args, { cwd, detached: true, stdio: 'ignore' })
+    proc.on('error', (err) => console.warn('[terminal] 外部终端启动失败', file, err?.message || err))
+    proc.unref()
+  } catch (err) {
+    console.warn('[terminal] 外部终端启动失败', file, err?.message || err)
+  }
+}
+
+/**
+ * 列出可用的系统外部终端
+ * @returns {{ok: boolean, terminals: Array<{id: string, name: string}>, defaultId: string}} 列表与默认项
+ */
+function listExternalTerminals() {
+  const list = detectExternalTerminals()
+  return {
+    ok: true,
+    terminals: list.map((item) => ({ id: item.id, name: item.name })),
+    defaultId: list.length ? list[0].id : '',
+  }
+}
+
+/**
+ * 在系统自己的终端窗口中打开指定目录
+ * @param {{dir?: string, cwd?: string, terminalId?: string}} payload 目标目录与外部终端 id（不指定则取优先级最高的）
+ * @returns {{ok: boolean, name?: string, id?: string, dir?: string, error?: string}} 打开结果
+ */
+function openExternalTerminal(payload = {}) {
+  const list = detectExternalTerminals()
+  if (!list.length) return { ok: false, error: '未检测到可用的系统终端程序' }
+  const target = list.find((item) => item.id === payload.terminalId) || list[0]
+  const dir = resolveCwd(payload.dir || payload.cwd)
+  const info = target.spawn(dir)
+  launchExternal(info.file, info.args, dir)
+  return { ok: true, name: target.name, id: target.id, dir }
+}
+
 module.exports = {
   setEventSender,
   listShells,
@@ -679,4 +894,6 @@ module.exports = {
   killAll,
   resize,
   complete,
+  listExternalTerminals,
+  openExternalTerminal,
 }

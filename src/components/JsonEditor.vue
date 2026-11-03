@@ -635,7 +635,7 @@ defineExpose({
 
 .line-nums pre {
   margin: 0;
-  font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
+  font-family: var(--md-source-font, 'Consolas', 'JetBrains Mono', 'Courier New', monospace);
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-color-placeholder);
@@ -660,7 +660,7 @@ defineExpose({
   padding: 16px;
   overflow: auto;
   pointer-events: none;
-  font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
+  font-family: var(--md-source-font, 'Consolas', 'JetBrains Mono', 'Courier New', monospace);
   font-size: 13px;
   line-height: 1.7;
   color: var(--text-color-primary);
@@ -685,7 +685,7 @@ defineExpose({
   resize: none;
   padding: 16px;
   overflow: auto;
-  font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
+  font-family: var(--md-source-font, 'Consolas', 'JetBrains Mono', 'Courier New', monospace);
   font-size: 13px;
   line-height: 1.7;
   color: transparent;
@@ -752,7 +752,7 @@ defineExpose({
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--el-color-danger-light-9);
   border: 1px solid var(--el-color-danger-light-5);
   border-radius: 6px;
   margin-bottom: 10px;

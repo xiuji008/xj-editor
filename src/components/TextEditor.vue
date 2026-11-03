@@ -10,9 +10,23 @@
         <el-button text size="small" class="te-find-btn" :icon="Search" @click="openFind('find')" />
       </el-tooltip>
     </div>
+
+    <!-- 大文件只读预览提示 -->
+    <div v-if="largeFile && largeFile.truncated" class="te-large-banner">
+      <el-icon class="te-large-icon"><WarningFilled /></el-icon>
+      <div class="te-large-body">
+        <p class="te-large-title">
+          文件过大（{{ formatSize(largeFile.size) }}），为避免卡死仅预览前 {{ formatSize(largeFile.previewChars) }} 内容
+        </p>
+        <p class="te-large-sub">其余部分未加载，无法编辑或保存，请用系统默认程序打开完整文件。</p>
+      </div>
+      <el-button size="small" type="primary" @click="emit('open-external')">用系统默认程序打开</el-button>
+    </div>
+
     <textarea
       ref="taRef"
       :value="modelValue"
+      :readonly="readonly"
       class="te-textarea"
       spellcheck="false"
       placeholder="在此输入文本内容..."
@@ -55,13 +69,18 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Document, MagicStick, TrendCharts, Search } from '@element-plus/icons-vue'
+import { Document, MagicStick, TrendCharts, Search, WarningFilled } from '@element-plus/icons-vue'
 import { getTextareaSelectionEndPos } from '../utils/caret'
 import { useTextareaHistory } from '../utils/history'
+import { formatSize } from '../utils/fileUtils'
 import FindBar from './FindBar.vue'
 
 const props = defineProps<{
   modelValue: string
+  /** 只读模式：大文件截断预览时禁止编辑，避免覆盖完整文件 */
+  readonly?: boolean
+  /** 大文件信息：非空表示以只读预览方式打开 */
+  largeFile?: { size: number; previewChars: number; truncated: boolean } | null
 }>()
 
 const emit = defineEmits<{
@@ -70,6 +89,8 @@ const emit = defineEmits<{
   (e: 'ask-ai', text: string): void
   /** 点击"生成图表"按钮：以选中的文本作为描述，交由父组件生成图表代码 */
   (e: 'generate-diagram', text: string): void
+  /** 点击"用系统默认程序打开"：大文件只读预览时使用 */
+  (e: 'open-external'): void
 }>()
 
 const taRef = ref<HTMLTextAreaElement>()
@@ -194,7 +215,17 @@ const handleTab = (e: KeyboardEvent) => {
   emit('update:modelValue', next)
 }
 
-const lineCount = computed(() => (props.modelValue ? props.modelValue.split('\n').length : 0))
+/** 快速统计换行数（不 split 生成百万级字符串数组，避免大文件卡顿） */
+function countLines(text: string): number {
+  if (!text) return 0
+  let n = 1
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) n++
+  }
+  return n
+}
+
+const lineCount = computed(() => countLines(props.modelValue))
 const charCount = computed(() => props.modelValue.length)
 
 /* ========== 查找 / 替换 ========== */
@@ -295,7 +326,7 @@ defineExpose({
   outline: none;
   resize: none;
   padding: 16px;
-  font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
+  font-family: var(--md-source-font, 'Consolas', 'JetBrains Mono', 'Courier New', monospace);
   font-size: 14px;
   line-height: 1.7;
   color: var(--text-color-primary);
@@ -306,6 +337,41 @@ defineExpose({
 
 .te-textarea::placeholder {
   color: var(--text-color-placeholder);
+}
+
+/* 大文件只读预览提示条 */
+.te-large-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--el-color-warning-light-9);
+  border-bottom: 1px solid var(--el-color-warning-light-7);
+  font-size: 12px;
+  color: var(--el-color-warning-dark-2);
+  flex-shrink: 0;
+}
+
+.te-large-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.te-large-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.te-large-title {
+  margin: 0;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.te-large-sub {
+  margin: 0;
+  opacity: 0.85;
+  line-height: 1.5;
 }
 
 /* 选中文本后的浮动按钮组：问 AI / 生成图表 */

@@ -1,0 +1,128 @@
+/* ========== 深色主题（VS Code 风格） ==========
+   由 <html class="dark"> 驱动（composables/useTheme.ts 负责切换类名）：
+   - 此处覆盖 styles/index.css 中的自定义 CSS 变量；
+   - Element Plus 的 el-* 变量由 element-plus/theme-chalk/dark/css-vars.css 接管；
+   - 补充 Markdown 预览扩展样式（utils/markdown.ts 注入的全局类）与 JSON 树的暗色配色。
+   说明：导出的 HTML / Word 使用独立的浅色模板，不受本文件影响；
+   Mermaid / Chart.js / PlantUML 图表容器保持浅色底（渲染产物本身是浅色，白底最易读）。 */
+
+html.dark {
+  color-scheme: dark;
+
+  /* 文字 */
+  --text-color-primary: #e5eaf3;
+  --text-color-regular: #cfd3dc;
+  --text-color-secondary: #a3a6ad;
+  --text-color-placeholder: #8d9095;
+
+  /* 边框 */
+  --border-color: #4c4d4f;
+  --border-color-light: #414243;
+  --border-color-lighter: #363637;
+
+  /* 背景：页面底 < 面板底，贴近 VS Code 的活动栏 / 侧栏 / 编辑器分层 */
+  --bg-color: #262727;
+  --bg-color-white: #1d1e20;
+  --bg-color-page: #141415;
+
+  /* 主色淡背景：暗色下改为低饱和深蓝（blockquote / hover 底色等） */
+  --color-primary-light-9: #182433;
+  --color-primary-light-7: #1f3145;
+  --color-primary-light-5: #26405c;
+  --color-primary-light-3: #33567c;
+
+  /* 阴影加深 */
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.4);
+  --shadow-base: 0 2px 8px rgba(0, 0, 0, 0.44);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.48);
+
+  /* 行内代码底色（Markdown 预览 `code` 片段） */
+  --md-inline-code-bg: #31353a;
+}
+
+/* ========== 滚动条 ========== */
+html.dark ::-webkit-scrollbar-thumb {
+  background: #4a4d52;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #5f6368;
+}
+
+/* ========== Markdown 预览：YAML Front Matter 卡片 ==========
+   文字色（fm-title / fm-meta / fm-desc）已由 MarkdownEditor 的 CSS 变量接管，
+   这里只需覆盖浅色渐变底与边框 */
+html.dark .markdown-body .frontmatter-card {
+  background: linear-gradient(135deg, #16243a 0%, #101a28 100%);
+  border-color: #2c4a6e;
+}
+
+/* ========== Markdown 预览：GitHub Alert 提示块 ========== */
+html.dark .markdown-body .alert-note {
+  background: #12202e;
+  border-color: var(--color-primary);
+}
+
+html.dark .markdown-body .alert-note .alert-header {
+  color: #79bbff;
+  background: rgba(64, 158, 255, 0.14);
+}
+
+html.dark .markdown-body .alert-tip {
+  background: #12241a;
+  border-color: #67c23a;
+}
+
+html.dark .markdown-body .alert-tip .alert-header {
+  color: #95d475;
+  background: rgba(103, 194, 58, 0.14);
+}
+
+html.dark .markdown-body .alert-important {
+  background: #221432;
+  border-color: #9c27b0;
+}
+
+html.dark .markdown-body .alert-important .alert-header {
+  color: #c78aea;
+  background: rgba(156, 39, 176, 0.16);
+}
+
+html.dark .markdown-body .alert-warning {
+  background: #2a2110;
+  border-color: #e6a23c;
+}
+
+html.dark .markdown-body .alert-warning .alert-header {
+  color: #eebe77;
+  background: rgba(230, 162, 60, 0.14);
+}
+
+html.dark .markdown-body .alert-caution {
+  background: #2c1516;
+  border-color: #f56c6c;
+}
+
+html.dark .markdown-body .alert-caution .alert-header {
+  color: #fab6b6;
+  background: rgba(245, 108, 108, 0.14);
+}
+
+/* ========== JSON 树语法配色（GitHub Dark 风格） ========== */
+html.dark .jti-key,
+html.dark .jti-key-input {
+  color: #6cb6ff;
+}
+
+html.dark .jti-val-string {
+  color: #7ee787;
+}
+
+html.dark .jti-val-number {
+  color: #e3b341;
+}
+
+html.dark .jti-val-boolean,
+html.dark .jti-bool-select .el-select__selected-item {
+  color: #b392f0;
+}

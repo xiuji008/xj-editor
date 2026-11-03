@@ -697,7 +697,7 @@ defineExpose({
   outline: none;
   resize: none;
   padding: 16px;
-  font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
+  font-family: var(--md-source-font, 'Consolas', 'JetBrains Mono', 'Courier New', monospace);
   font-size: 14px;
   line-height: 1.7;
   color: var(--text-color-primary);
