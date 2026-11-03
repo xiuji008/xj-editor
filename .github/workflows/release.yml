@@ -41,7 +41,7 @@ jobs:
       # signAndEditExecutable=true 让 rcedit 在 CI 上正常嵌入图标与版本信息
       # （本机因安全软件问题在 package.json 里关闭了它）；CSC_IDENTITY_AUTO_DISCOVERY=false 跳过代码签名。
       - name: 打包 exe
-        run: npx electron-builder --win --config.win.signAndEditExecutable=true
+        run: npx electron-builder --win --config.win.signAndEditExecutable=true --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
