@@ -770,6 +770,159 @@ ipcMain.handle('dir:read', async (_event, { dirPath }) => {
   }
 })
 
+/* ========== 目录搜索：文件名 + 文本内容 ========== */
+/** 可参与内容搜索的文本类扩展名（二进制容器格式如 pdf/docx/xlsx 不解析） */
+const SEARCH_TEXT_EXTS = new Set([
+  'md', 'markdown', 'mdx', 'txt', 'log', 'json', 'jsonc', 'json5',
+  'js', 'mjs', 'cjs', 'ts', 'mts', 'cts', 'tsx', 'jsx', 'vue', 'svelte',
+  'css', 'scss', 'sass', 'less', 'styl', 'html', 'htm', 'xhtml', 'xml', 'svg',
+  'yml', 'yaml', 'toml', 'ini', 'conf', 'cfg', 'properties', 'env',
+  'sql', 'sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1', 'py', 'rb', 'php', 'pl', 'lua', 'r',
+  'java', 'kt', 'kts', 'scala', 'groovy', 'go', 'rs', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'swift',
+  'csv', 'tsv', 'tex', 'gradle', 'dockerfile', 'gitignore', 'editorconfig',
+])
+/** 单个文件参与内容搜索的体积上限（2MB，避免读取超大文件拖慢搜索） */
+const SEARCH_TEXT_MAX_FILE_BYTES = 2 * 1024 * 1024
+/** 最多扫描的文件数 / 最多返回的命中数 / 最多递归层级 / 总耗时预算 */
+const SEARCH_TEXT_MAX_FILES = 3000
+const SEARCH_TEXT_MAX_MATCHES = 300
+const SEARCH_TEXT_MAX_DEPTH = 12
+const SEARCH_TEXT_BUDGET_MS = 8000
+/** 搜索时直接跳过的重型目录 */
+const SEARCH_SKIP_DIRS = new Set([
+  'node_modules', '.git', '.svn', '.hg', '.cache', '.venv', 'venv', '__pycache__',
+  'dist', 'build', 'out', 'release', 'coverage', 'target', 'vendor',
+])
+
+/** 统计关键字在文本中出现的次数（最多统计 99 次，防止恶意大文本空转） */
+function countOccurrences(haystackLower, needleLower) {
+  if (!needleLower) return 0
+  let count = 0
+  let from = 0
+  while (count < 99) {
+    const idx = haystackLower.indexOf(needleLower, from)
+    if (idx < 0) break
+    count++
+    from = idx + needleLower.length
+  }
+  return count
+}
+
+/** 取命中位置前后的上下文片段，压缩空白后用作悬浮提示 */
+function buildSnippet(content, index, length) {
+  const start = Math.max(0, index - 40)
+  const end = Math.min(content.length, index + length + 40)
+  return content
+    .slice(start, end)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * 目录搜索：遍历 rootPath，文件名包含关键字或文本内容包含关键字都算命中。
+ * 单次 IPC 完成整棵树的遍历，避免前端逐文件往返。
+ */
+/** 最新一次搜索的序号：新搜索发起后，仍在遍历中的旧搜索自行中止 */
+let latestSearchId = 0
+
+ipcMain.handle('dir:searchText', async (_event, { rootPath, keyword }) => {
+  const kw = String(keyword || '')
+  if (!rootPath || !kw) return { ok: true, hits: [], truncated: false, scannedFiles: 0 }
+  const searchId = ++latestSearchId
+  const lower = kw.toLowerCase()
+  const hits = []
+  let scannedFiles = 0
+  let truncated = false
+  const started = Date.now()
+
+  const walk = async (dirPath, depth) => {
+    // 已有更新的搜索发起：立即停止，避免多路遍历叠加占用 CPU
+    if (truncated || searchId !== latestSearchId) return
+    if (depth > SEARCH_TEXT_MAX_DEPTH || Date.now() - started > SEARCH_TEXT_BUDGET_MS) {
+      truncated = true
+      return
+    }
+    let entries
+    try {
+      entries = await fsp.readdir(dirPath, { withFileTypes: true })
+    } catch {
+      return // 无权限目录直接跳过
+    }
+    for (const entry of entries) {
+      if (truncated || searchId !== latestSearchId) return
+      if (isIgnoredEntry(entry.name)) continue
+      const full = path.join(dirPath, entry.name)
+      const nameLower = entry.name.toLowerCase()
+
+      if (entry.isDirectory()) {
+        if (SEARCH_SKIP_DIRS.has(nameLower)) continue
+        if (nameLower.includes(lower)) {
+          hits.push({
+            name: entry.name,
+            path: full,
+            isDirectory: true,
+            ext: '',
+            nameMatch: true,
+            contentMatches: 0,
+            snippet: '',
+          })
+          if (hits.length >= SEARCH_TEXT_MAX_MATCHES) {
+            truncated = true
+            return
+          }
+        }
+        await walk(full, depth + 1)
+        continue
+      }
+
+      scannedFiles++
+      if (scannedFiles > SEARCH_TEXT_MAX_FILES) {
+        truncated = true
+        return
+      }
+
+      const ext = path.extname(entry.name).replace(/^\./, '').toLowerCase()
+      const nameMatch = nameLower.includes(lower)
+      let contentMatches = 0
+      let snippet = ''
+      if (SEARCH_TEXT_EXTS.has(ext) || !ext) {
+        try {
+          const stat = await fsp.stat(full)
+          if (stat.size > 0 && stat.size <= SEARCH_TEXT_MAX_FILE_BYTES) {
+            const buf = await fsp.readFile(full)
+            // 前 8KB 含 NUL 视为二进制，跳过内容匹配
+            if (!buf.subarray(0, Math.min(buf.length, 8192)).includes(0)) {
+              const { content } = decodeText(buf)
+              const idx = content.toLowerCase().indexOf(lower)
+              if (idx >= 0) {
+                contentMatches = countOccurrences(content.toLowerCase(), lower)
+                snippet = buildSnippet(content, idx, kw.length)
+              }
+            }
+          }
+        } catch {
+          /* 读取失败（占用 / 无权限）按未命中处理 */
+        }
+      }
+
+      if (nameMatch || contentMatches > 0) {
+        hits.push({ name: entry.name, path: full, isDirectory: false, ext, nameMatch, contentMatches, snippet })
+        if (hits.length >= SEARCH_TEXT_MAX_MATCHES) {
+          truncated = true
+          return
+        }
+      }
+    }
+  }
+
+  try {
+    await walk(rootPath, 1)
+    return { ok: true, hits, truncated, scannedFiles }
+  } catch (err) {
+    return { ok: false, error: err.message, hits: [], truncated, scannedFiles }
+  }
+})
+
 // 文本解码：UTF-8 / UTF-16LE / UTF-16BE BOM 检测，默认 UTF-8
 function decodeText(buf) {
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {

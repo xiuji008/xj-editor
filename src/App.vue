@@ -34,6 +34,8 @@ import {
   Moon,
   Sunny,
   VideoPlay,
+  Search,
+  Loading,
 } from '@element-plus/icons-vue'
 import MarkdownEditor from './components/MarkdownEditor.vue'
 import HtmlEditor from './components/HtmlEditor.vue'
@@ -1773,6 +1775,175 @@ function collapseAllTree() {
   saveLastExpanded()
 }
 
+/* ========== 目录树搜索（文件名 + 文本内容） ========== */
+/** 搜索时最多扫描的目录数（仅无主进程搜索能力时的降级扫描使用） */
+const SEARCH_MAX_DIRS = 500
+/** 搜索时最多递归的层级 */
+const SEARCH_MAX_DEPTH = 12
+
+/** 搜索关键字（侧边栏输入框） */
+const searchKeyword = ref('')
+/** 是否正在搜索 */
+const searching = ref(false)
+/** 命中的节点路径集合（斜杠规范形式），用于模板高亮 */
+const searchHitPaths = ref<Set<string>>(new Set())
+/** 命中项的附加信息：路径 → 文件名命中 / 内容命中次数 / 上下文片段 */
+const searchHitInfo = ref<Map<string, { nameMatch: boolean; contentMatches: number; snippet: string }>>(new Map())
+/** 命中数量 */
+const searchHitCount = ref(0)
+/** 是否因文件数 / 层级 / 耗时超限而提前截断 */
+const searchTruncated = ref(false)
+/** 搜索令牌：输入继续变化时使上一次未完成的扫描结果失效 */
+let searchToken = 0
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 清空搜索结果与高亮 */
+function clearTreeSearch() {
+  searchToken++
+  searching.value = false
+  searchHitPaths.value = new Set()
+  searchHitInfo.value = new Map()
+  searchHitCount.value = 0
+  searchTruncated.value = false
+}
+
+watch(searchKeyword, (v) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const kw = v.trim()
+  if (!kw) {
+    // 清空关键字：立即取消搜索并清除高亮
+    clearTreeSearch()
+    return
+  }
+  // 防抖后触发搜索，避免每个字符都全量搜索
+  searchTimer = setTimeout(() => void runTreeSearch(kw), 300)
+})
+
+// 切换目录 / 单文件模式时重置搜索状态
+watch(openedDir, () => {
+  clearTreeSearch()
+  searchKeyword.value = ''
+})
+
+/**
+ * 搜索目录：文件名包含关键字 或 文本文件内容包含关键字都算命中。
+ * 主进程单次遍历完成（含内容读取），这里负责收集命中项的祖先目录，
+ * 再复用 expandNodeByPath 逐层展开 lazy 树直达命中位置。
+ */
+async function runTreeSearch(kw: string) {
+  const token = ++searchToken
+  const rootDir = openedDir.value
+  if (!rootDir || !window.mdAPI) return
+  searching.value = true
+  searchTruncated.value = false
+  try {
+    const lower = kw.toLowerCase()
+    // 去掉尾部斜杠，保证与树节点 path（主进程 path.join 产出）一致可比
+    const rootKey = normPath(rootDir).replace(/\/+$/, '')
+    const hits = new Set<string>()
+    const info = new Map<string, { nameMatch: boolean; contentMatches: number; snippet: string }>()
+    const expandSet = new Set<string>([rootKey])
+    let truncated = false
+
+    // 从命中项向上收集所有祖先目录（含根目录），保证树能逐层展开到该位置
+    const addAncestors = (absPath: string) => {
+      let key = normPath(absPath)
+      let parent = key.slice(0, Math.max(key.lastIndexOf('/'), 0))
+      while (parent.length > rootKey.length) {
+        expandSet.add(parent)
+        parent = parent.slice(0, Math.max(parent.lastIndexOf('/'), 0))
+      }
+    }
+
+    const addHit = (path: string, isDirectory: boolean, nameMatch: boolean, contentMatches: number, snippet: string) => {
+      const key = normPath(path)
+      hits.add(key)
+      // 同一路径可能既命中文件名又命中内容，合并保留信息更全的一条
+      const prev = info.get(key)
+      info.set(key, {
+        nameMatch: nameMatch || !!prev?.nameMatch,
+        contentMatches: Math.max(contentMatches, prev?.contentMatches || 0),
+        snippet: snippet || prev?.snippet || '',
+      })
+      addAncestors(path)
+      if (isDirectory) expandSet.add(key)
+    }
+
+    // 主进程搜索：文件名 + 文本内容
+    const api = window.mdAPI as unknown as {
+      searchText?: (
+        root: string,
+        keyword: string,
+      ) => Promise<{ ok: boolean; hits?: DirSearchHit[]; truncated?: boolean }>
+    }
+    if (typeof api.searchText === 'function') {
+      const res = await api.searchText(rootDir, kw)
+      if (token !== searchToken) return
+      if (!res?.ok) {
+        ElMessage.error(`搜索失败：${(res as { error?: string })?.error || '未知错误'}`)
+        return
+      }
+      for (const h of res.hits || []) {
+        addHit(h.path, h.isDirectory, h.nameMatch, h.contentMatches, h.snippet)
+      }
+      truncated = !!res.truncated
+    } else {
+      // 旧版主进程（未提供 searchText）降级：仅按文件名扫描
+      const scan = async (dirPath: string, depth: number): Promise<void> => {
+        if (token !== searchToken || truncated) return
+        if (depth > SEARCH_MAX_DEPTH || hits.size >= SEARCH_MAX_DIRS) {
+          truncated = true
+          return
+        }
+        const res = await window.mdAPI!.readDir(dirPath)
+        if (!res?.ok || token !== searchToken) return
+        for (const c of res.children || []) {
+          if (token !== searchToken) return
+          if (c.name.toLowerCase().includes(lower)) addHit(c.path, c.isDirectory, true, 0, '')
+          if (c.isDirectory) await scan(c.path, depth + 1)
+        }
+      }
+      await scan(rootDir, 1)
+      if (token !== searchToken) return
+    }
+
+    searchHitPaths.value = hits
+    searchHitInfo.value = info
+    searchHitCount.value = hits.size
+    searchTruncated.value = truncated
+
+    if (hits.size) {
+      const tree = treeRef.value as any
+      if (tree?.store?.root) {
+        // 复用已有的逐层 lazy 展开逻辑，展开所有命中路径的祖先
+        await expandNodeByPath(tree.store.root, expandSet)
+        // 展开产生新节点后恢复当前文件高亮
+        nextTick(() => {
+          if (currentPath.value) tree.setCurrentKey?.(currentPath.value)
+        })
+      }
+    }
+  } finally {
+    if (token === searchToken) searching.value = false
+  }
+}
+
+/** 命中项的内容命中次数（模板徽标用） */
+function searchContentCount(path: string): number {
+  return searchHitInfo.value.get(normPath(path))?.contentMatches || 0
+}
+
+/** 命中项的悬浮提示：内容片段 + 命中处数 */
+function searchHitTip(path: string): string {
+  const info = searchHitInfo.value.get(normPath(path))
+  if (!info) return ''
+  const parts: string[] = []
+  if (info.nameMatch) parts.push('文件名匹配')
+  if (info.contentMatches) parts.push(`内容命中 ${info.contentMatches} 处`)
+  if (info.snippet) parts.push(info.snippet)
+  return parts.join('\n')
+}
+
 // 侧边栏显隐变化时记忆（saveLastSidebar 内部会忽略尚未打开目录时的初始化）
 watch(showSidebar, (v) => saveLastSidebar(v))
 
@@ -3069,6 +3240,28 @@ const viewOptions = [
             </el-tooltip>
           </div>
         </div>
+        <!-- 目录树搜索：文件名或文件内容命中都展示，命中项高亮并自动展开 -->
+        <div v-if="openedDir" class="sidebar-search">
+          <el-input
+            v-model="searchKeyword"
+            class="sidebar-search-input"
+            size="small"
+            clearable
+            placeholder="搜索文件名 / 文件内容"
+            :prefix-icon="Search"
+          >
+            <template v-if="searching" #suffix>
+              <el-icon class="is-loading"><Loading /></el-icon>
+            </template>
+          </el-input>
+          <div v-if="searchKeyword.trim()" class="sidebar-search-hint">
+            <template v-if="searching">搜索中…</template>
+            <template v-else-if="searchHitCount">
+              命中 {{ searchHitCount }} 项<template v-if="searchTruncated">（文件过多，结果可能不完整）</template>
+            </template>
+            <template v-else>无匹配项</template>
+          </div>
+        </div>
         <div
           v-if="openedDir || currentPath"
           class="sidebar-tree"
@@ -3093,7 +3286,10 @@ const viewOptions = [
               <span
                 v-overflow-tip="data.name"
                 class="tree-node"
-                :class="{ 'is-drop-target': dropTargetPath === normPath(data.path) }"
+                :class="{
+                  'is-drop-target': dropTargetPath === normPath(data.path),
+                  'is-search-hit': searchHitPaths.has(normPath(data.path)),
+                }"
                 draggable="true"
                 @dragstart.stop="onTreeNodeDragStart($event, data)"
                 @dragover.stop.prevent="onTreeDragOver($event, data)"
@@ -3108,6 +3304,13 @@ const viewOptions = [
                   :size="16"
                 />
                 <span class="tree-label">{{ data.name }}</span>
+                <span
+                  v-if="searchContentCount(data.path)"
+                  class="search-hit-badge"
+                  :title="searchHitTip(data.path)"
+                >
+                  内容 {{ searchContentCount(data.path) }}
+                </span>
                 <span
                   v-if="gitBadgeOf(data)"
                   class="git-badge"
@@ -3685,6 +3888,44 @@ const viewOptions = [
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+/* 目录树搜索 */
+.sidebar-search {
+  flex-shrink: 0;
+  padding: 6px 8px 2px;
+  border-bottom: 1px solid var(--border-color-lighter);
+}
+
+.sidebar-search-input {
+  width: 100%;
+}
+
+.sidebar-search-hint {
+  padding: 3px 4px 4px;
+  font-size: 12px;
+  color: var(--text-color-secondary);
+  user-select: none;
+}
+
+.sidebar-tree :deep(.tree-node.is-search-hit) .tree-label {
+  background: var(--color-primary-light-bg, rgba(64, 158, 255, 0.22));
+  border-radius: 2px;
+  padding: 0 2px;
+  margin-left: -2px;
+}
+
+/* 内容命中徽标：显示该文件命中的处数 */
+.search-hit-badge {
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--color-primary, #409eff);
+  background: rgba(64, 158, 255, 0.14);
+  cursor: help;
 }
 
 .sidebar-tree {

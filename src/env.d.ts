@@ -25,6 +25,20 @@ interface DirEntry {
   mtime: number
 }
 
+/** 目录搜索命中项 */
+interface DirSearchHit {
+  name: string
+  path: string
+  isDirectory: boolean
+  ext: string
+  /** 文件名是否包含关键字 */
+  nameMatch: boolean
+  /** 文件内容命中次数（目录恒为 0） */
+  contentMatches: number
+  /** 内容命中位置的上下文片段（用于悬浮提示） */
+  snippet: string
+}
+
 /** 图片导入结果 */
 interface ImageImportResult {
   sourcePath: string
@@ -66,6 +80,17 @@ interface MdAPI {
   }) => Promise<{ canceled: boolean; path?: string }>
   selectImages: () => Promise<{ canceled: boolean; filePaths?: string[] }>
   readDir: (dirPath: string) => Promise<{ ok: boolean; path?: string; children?: DirEntry[]; error?: string }>
+  /** 目录搜索：文件名或文本内容包含 keyword 的文件 / 目录 */
+  searchText: (
+    rootPath: string,
+    keyword: string,
+  ) => Promise<{
+    ok: boolean
+    hits?: DirSearchHit[]
+    truncated?: boolean
+    scannedFiles?: number
+    error?: string
+  }>
   readFile: (filePath: string) => Promise<{ ok: boolean; path?: string; isText?: boolean; content?: string; encoding?: string; size?: number; error?: string }>
   readDataUrl: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
   saveFile: (args: { filePath: string; content: string }) => Promise<{ canceled: boolean; filePath?: string }>

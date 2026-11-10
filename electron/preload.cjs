@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('mdAPI', {
   openDirectory: (payload) => ipcRenderer.invoke('dialog:openDirectory', payload),
   selectImages: () => ipcRenderer.invoke('dialog:selectImages'),
   readDir: (dirPath) => ipcRenderer.invoke('dir:read', { dirPath }),
+  /** 目录搜索：文件名或文本内容包含 keyword 的文件 / 目录（单次遍历，主进程完成） */
+  searchText: (rootPath, keyword) => ipcRenderer.invoke('dir:searchText', { rootPath, keyword }),
   readFile: (filePath) => ipcRenderer.invoke('file:read', { filePath }),
   readDataUrl: (filePath) => ipcRenderer.invoke('file:readDataUrl', { filePath }),
   saveFile: ({ filePath, content }) => ipcRenderer.invoke('dialog:save', { filePath, content }),
