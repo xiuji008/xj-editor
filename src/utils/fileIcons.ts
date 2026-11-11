@@ -215,6 +215,8 @@ interface NameRule {
 const ICON_RULES: IconRule[] = [
   // —— 文档 ——
   { exts: ['md', 'markdown', 'mdown', 'mkd'], def: def('markdown', '#24292F', GLYPH_MARKDOWN) },
+  // 白板草图（Excalidraw 手绘紫）
+  { exts: ['board', 'excalidraw'], def: def('whiteboard', '#6965DB', textGlyph('Bo', 10.5)) },
   { exts: ['txt', 'log', 'rtf', 'text'], def: def('text', '#64748B', GLYPH_TEXT) },
   { exts: ['pdf'], def: def('pdf', '#E53935', GLYPH_PDF) },
   // —— Office / 电子书 ——

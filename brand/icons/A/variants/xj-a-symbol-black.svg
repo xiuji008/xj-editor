@@ -1,0 +1,14 @@
+<svg fill="#000000" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title"><title>XJ-Editor A 六爻成文</title>
+  <title id="title">XJ-Editor A · 六爻成文 — 主符号</title>
+  <path id="symbol" fill="#000000" d="
+    M128 16 C122 28 114 32 114 36 A14 14 0 0 0 142 36 C142 32 134 28 128 16 Z
+    M32 56 H116 V78 H32 Z
+    M140 56 H224 V78 H140 Z
+    M32 88 H224 V110 H32 Z
+    M32 120 H116 V142 H32 Z
+    M140 120 H224 V142 H140 Z
+    M32 152 H224 V174 H32 Z
+    M32 184 H224 V206 H32 Z
+    M32 216 H116 V238 H32 Z
+    M140 216 H224 V238 H140 Z"/>
+</svg>

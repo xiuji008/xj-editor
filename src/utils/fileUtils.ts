@@ -125,6 +125,7 @@ export type FileKind =
   | 'pdf'
   | 'office'
   | 'archive'
+  | 'whiteboard'
   | 'other'
 
 const MARKDOWN_EXTS = new Set(['md', 'markdown', 'mdown', 'mkd'])
@@ -134,6 +135,8 @@ const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', '
 const OFFICE_EXTS = new Set(['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'])
 /** 压缩包扩展名：与 @open-file-viewer/core 的 archivePlugin 支持范围保持一致 */
 const ARCHIVE_EXTS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'])
+/** 白板文件扩展名：.board 为本应用品牌扩展名（内容即 Excalidraw 开放 JSON），.excalidraw 为外部兼容 */
+const WHITEBOARD_EXTS = new Set(['board', 'excalidraw'])
 
 /** 根据文件名 / 扩展名与二进制标记分类文件 */
 export function classifyFile(filePath: string, isText: boolean): FileKind {
@@ -145,6 +148,8 @@ export function classifyFile(filePath: string, isText: boolean): FileKind {
   if (ext === 'pdf') return 'pdf'
   if (OFFICE_EXTS.has(ext)) return 'office'
   if (ARCHIVE_EXTS.has(ext)) return 'archive'
+  // 白板必须在 isText 兜底之前判断（.board 内容是 JSON 文本，否则会被当成 text 打开）
+  if (WHITEBOARD_EXTS.has(ext)) return 'whiteboard'
   if (isText) return 'text'
   return 'other'
 }

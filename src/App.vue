@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading, ElTree } from 'element-plus'
 import {
   Plus,
@@ -42,6 +42,8 @@ import HtmlEditor from './components/HtmlEditor.vue'
 import JsonEditor from './components/JsonEditor.vue'
 import TextEditor from './components/TextEditor.vue'
 import FilePreview from './components/FilePreview.vue'
+// 白板（Excalidraw + React 运行时体积较大，按需异步加载）
+const WhiteboardView = defineAsyncComponent(() => import('./components/WhiteboardView.vue'))
 import AiPanel from './components/AiPanel.vue'
 import AiChatWindow from './components/AiChatWindow.vue'
 import AiLogDialog from './components/AiLogDialog.vue'
@@ -2303,10 +2305,17 @@ const markdownEditorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
 const htmlEditorRef = ref<InstanceType<typeof HtmlEditor> | null>(null)
 const jsonEditorRef = ref<InstanceType<typeof JsonEditor> | null>(null)
 const textEditorRef = ref<InstanceType<typeof TextEditor> | null>(null)
+/** 白板视图句柄（全局 Ctrl+S 路由到白板内部保存） */
+const whiteboardRef = ref<{ saveNow(): Promise<void> } | null>(null)
 
-/** 只读预览类型（office / pdf / 压缩包 / 图片等非文本文件） */
+/** 只读预览类型（office / pdf / 压缩包 / 图片 / 白板等非文本编辑文件） */
 const isReadonlyKind = (kind: FileKind) =>
-  kind === 'image' || kind === 'pdf' || kind === 'office' || kind === 'archive' || kind === 'other'
+  kind === 'image' ||
+  kind === 'pdf' ||
+  kind === 'office' ||
+  kind === 'archive' ||
+  kind === 'whiteboard' ||
+  kind === 'other'
 
 /** 获取当前编辑器（Markdown / HTML / JSON / 文本）中选中的文本 */
 function getEditorSelection(): string {
@@ -2914,7 +2923,10 @@ function onKeydown(e: KeyboardEvent) {
   const key = e.key.toLowerCase()
   if (key === 's') {
     e.preventDefault()
-    if (e.shiftKey) saveAs()
+    // 白板文件：转交白板视图内部保存（App 层 content 为空，不能走文本保存链路）
+    if (fileType.value === 'whiteboard') {
+      void whiteboardRef.value?.saveNow()
+    } else if (e.shiftKey) saveAs()
     else saveFile()
   } else if (key === 'o') {
     e.preventDefault()
@@ -3447,6 +3459,13 @@ const viewOptions = [
           @open-external="openCurrentWithDefault"
           @ask-ai="onAskAi"
           @generate-diagram="onGenerateDiagram"
+        />
+
+        <!-- 白板草图（Excalidraw） -->
+        <WhiteboardView
+          v-else-if="activeFileType === 'whiteboard'"
+          ref="whiteboardRef"
+          :file-path="currentPath"
         />
 
         <!-- 图片 / PDF / Office / 压缩包 / 其他二进制预览 -->

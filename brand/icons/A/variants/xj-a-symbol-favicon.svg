@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>XJ-Editor A 六爻成文</title><g transform="translate(-23.3 -23.3) scale(1.182)">
+  <title id="title">XJ-Editor A · 六爻成文 — 小尺寸专用简化稿</title>
+  <path id="symbol" fill="#14536B" d="
+    M128 24 C122 36 114 40 114 42 A14 14 0 0 0 142 42 C142 40 134 36 128 24 Z
+    M32 72 H112 V112 H32 Z
+    M144 72 H224 V112 H144 Z
+    M32 132 H224 V172 H32 Z
+    M32 192 H112 V232 H32 Z
+    M144 192 H224 V232 H144 Z"/>
+</g></svg>

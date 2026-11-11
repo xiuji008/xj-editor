@@ -75,3 +75,4 @@ $RECYCLE.BIN/
 #   scripts/         构建脚本（copy-pdf-assets.cjs、after-pack.cjs）
 #   docs/            项目设计文档
 #   package-lock.json  依赖锁定，保证构建可复现
+release_build/

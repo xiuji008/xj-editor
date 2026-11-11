@@ -10,6 +10,9 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  optimizeDeps: {
+    include: ['@excalidraw/excalidraw', 'react', 'react-dom/client'],
+  },
   build: {
     outDir: 'dist',
     chunkSizeWarningLimit: 2000,
@@ -22,6 +25,8 @@ export default defineConfig({
           katex: ['katex'],
           // pdf.js 与其 worker 源码单独成块，配合 PDF 阅读器的异步加载按需拉取
           pdfjs: ['pdfjs-dist'],
+          // 白板（Excalidraw + React 运行时）单独成块，仅在打开白板文件时按需加载
+          whiteboard: ['@excalidraw/excalidraw', 'react', 'react-dom'],
         },
       },
     },

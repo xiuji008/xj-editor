@@ -8,14 +8,16 @@
   "license": "MIT",
   "scripts": {
     "pdf:assets": "node scripts/copy-pdf-assets.cjs",
-    "dev": "npm run pdf:assets && vite",
+    "wb:assets": "node scripts/copy-whiteboard-assets.cjs",
+    "dev": "npm run pdf:assets && npm run wb:assets && vite",
     "dev:electron": "concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "build": "npm run pdf:assets && vite build",
+    "build": "npm run pdf:assets && npm run wb:assets && vite build",
     "dist": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
     "dist:dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
+    "@excalidraw/excalidraw": "^0.18.1",
     "@firecrawl/anydoc-wasm": "^0.2.4",
     "@open-file-viewer/core": "^0.1.42",
     "@open-file-viewer/vue": "^0.1.42",
@@ -29,10 +31,14 @@
     "mermaid": "^11.16.0",
     "pako": "^2.1.0",
     "pdfjs-dist": "^6.3.289",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "vue": "^3.5.13"
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-vue": "^5.2.3",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
@@ -82,6 +88,13 @@
         "description": "Markdown 文档",
         "mimeType": "text/markdown",
         "role": "Editor"
+      },
+      {
+        "ext": "board",
+        "name": "Whiteboard Document",
+        "description": "白板草图",
+        "mimeType": "application/json",
+        "role": "Editor"
       }
     ],
     "afterPack": "scripts/after-pack.cjs",
@@ -95,6 +108,7 @@
         }
       ],
       "icon": "build/icon.ico",
+      "executableName": "xj-editor",
       "signAndEditExecutable": false
     },
     "nsis": {
@@ -103,6 +117,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "XJ-Editor",
+      "artifactName": "xj-editor.exe",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
     }

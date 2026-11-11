@@ -21,6 +21,7 @@ import 'katex/dist/katex.min.css'
 import pako from 'pako'
 import { getPlantUmlRenderUrl } from './plantUmlConfig'
 import { runScript } from './scriptRunner'
+import { mountWhiteboardEmbeds, unmountAllWhiteboardEmbeds } from './whiteboardEmbed'
 import hljs from 'highlight.js/lib/common'
 // 代码高亮主题 CSS（?inline 导入为字符串，按需动态注入）
 import githubDarkCss from '../styles/code-themes/github-dark.css?inline'
@@ -807,6 +808,7 @@ const LANG_EXT_MAP: Record<string, string> = {
   csv: 'csv', tsv: 'tsv',
   // 图表 / 公式（本应用扩展语法：导出的是图表源码，便于复用与迁移）
   mermaid: 'mmd', sequence: 'mmd', plantuml: 'puml', puml: 'puml',
+  whiteboard: 'board', excalidraw: 'excalidraw',
   chart: 'json', chartjs: 'json', math: 'tex', mathjax: 'tex',
   // 纯文本
   text: 'txt', txt: 'txt', plaintext: 'txt', plain: 'txt', log: 'log',
@@ -1144,6 +1146,8 @@ function appendDiagramHeader(container: HTMLElement, langLabel: string, source: 
  * @param cwd 当前文档所在目录，作为 ```js 代码块「运行」时的工作目录
  */
 export async function enhanceRenderedDom(container: HTMLElement, baseName?: string, cwd?: string): Promise<void> {
+  // 预览重新渲染会替换整块 HTML，先卸载上一轮挂载的内嵌白板（React 根）
+  unmountAllWhiteboardEmbeds()
   // --- 第一步：扫描 code-block-wrapper，按 data-lang 转换特殊代码块 ---
   const codeWrappers = container.querySelectorAll<HTMLElement>('.code-block-wrapper')
   for (const wrapper of Array.from(codeWrappers)) {
@@ -1179,6 +1183,29 @@ export async function enhanceRenderedDom(container: HTMLElement, baseName?: stri
       inner.textContent = mermaidCode
       mermaidDiv.appendChild(inner)
       wrapper.replaceWith(mermaidDiv)
+      continue
+    }
+
+    // 白板草图（Excalidraw）：内容为 .board 文件路径或内联 JSON，
+    // 占位后由 whiteboardEmbed 统一挂载只读画布（React 子树按需异步加载）
+    if (lang === 'whiteboard' || lang === 'excalidraw') {
+      const wbDiv = document.createElement('div')
+      wbDiv.className = 'whiteboard-embed'
+      // 保留源码行号标记，供「源码 / 预览」同步滚动使用
+      wbDiv.dataset.line = wrapper.dataset.line || ''
+      appendDiagramHeader(wbDiv, 'whiteboard', codeText)
+      const canvasDiv = document.createElement('div')
+      canvasDiv.className = 'whiteboard-embed__canvas'
+      const trimmed = codeText.trim()
+      if (trimmed.startsWith('{')) {
+        // 内联 Excalidraw JSON
+        canvasDiv.dataset.wbJson = encodeURIComponent(trimmed)
+      } else if (trimmed) {
+        // 白板文件路径：相对当前 md 所在目录（增强阶段传入 cwd）或绝对路径
+        canvasDiv.dataset.wbSrc = encodeURIComponent(trimmed.split(/\r?\n/)[0].trim())
+      }
+      wbDiv.appendChild(canvasDiv)
+      wrapper.replaceWith(wbDiv)
       continue
     }
 
@@ -1238,6 +1265,9 @@ export async function enhanceRenderedDom(container: HTMLElement, baseName?: stri
       continue
     }
   }
+
+  // --- 白板草图：挂载 ```whiteboard 占位元素为只读 Excalidraw 画布 ---
+  await mountWhiteboardEmbeds(container, cwd)
 
   // --- 普通代码块：highlight.js 语法高亮 ---
   // 对未被转换为图表/公式的普通代码块，执行语法高亮（token 着色）
@@ -1700,6 +1730,24 @@ export function getMarkdownExtensionStyles(): string {
   color: #f56c6c;
   font-size: 13px;
   padding: 12px;
+}
+
+/* ========== 白板草图（Excalidraw 内嵌） ========== */
+.whiteboard-embed {
+  margin: 16px 0;
+  background: #fafafa;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.whiteboard-embed__canvas {
+  width: 100%;
+  height: 420px;
+}
+/* 深色主题下的容器底色（画布自身由 Excalidraw theme 控制） */
+.dark .whiteboard-embed {
+  background: #1d1e20;
+  border-color: #414243;
 }
 
 /* ========== GitHub Alert 提示块 ========== */

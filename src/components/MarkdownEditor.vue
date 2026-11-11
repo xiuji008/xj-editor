@@ -61,6 +61,40 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            <!-- 插入表情：分类标签 + 表情格子，点击插入到光标处 -->
+            <el-popover
+              trigger="click"
+              placement="bottom-end"
+              :width="332"
+              :persistent="false"
+              popper-class="emoji-picker-popover"
+            >
+              <template #reference>
+                <el-button text size="small" class="emoji-trigger" title="插入表情">表情</el-button>
+              </template>
+              <div class="emoji-picker">
+                <div class="emoji-picker__cats">
+                  <button
+                    v-for="g in emojiGroups"
+                    :key="g.key"
+                    type="button"
+                    class="emoji-picker__cat"
+                    :class="{ 'is-active': emojiActiveKey === g.key }"
+                    @click="emojiActiveKey = g.key"
+                  >{{ g.label }}</button>
+                </div>
+                <div v-if="emojiActiveGroup" class="emoji-picker__grid">
+                  <button
+                    v-for="(e, i) in emojiActiveGroup.emojis"
+                    :key="emojiActiveGroup.key + '-' + i"
+                    type="button"
+                    class="emoji-picker__item"
+                    :title="e"
+                    @click="insertEmoji(e)"
+                  >{{ e }}</button>
+                </div>
+              </div>
+            </el-popover>
           </div>
           <!-- 额外工具栏内容（如放大按钮），始终可见 -->
           <div class="pane-extra">
@@ -326,6 +360,7 @@ import {
 } from '../utils/fileUtils'
 import { getTextareaSelectionEndPos, getTextareaCaretPos } from '../utils/caret'
 import { useTextareaHistory } from '../utils/history'
+import { EMOJI_GROUPS, loadRecentEmojis, pushRecentEmoji, type EmojiGroup } from '../utils/emojiData'
 import FindBar from './FindBar.vue'
 import PreviewFindBar from './PreviewFindBar.vue'
 
@@ -482,8 +517,17 @@ const schedulePreviewRender = () => {
 }
 watch(() => props.modelValue, schedulePreviewRender)
 
+/**
+ * 源码区最近一次输入（含回车换行）的时间。
+ * 输入后预览会防抖重渲染，渲染完成时的锚定 / 增强可能引发预览 scroll 事件；
+ * 该窗口内禁止「预览 -> 源码」的反向滚动，避免正在编辑的光标行被拽到视口顶部。
+ */
+const SOURCE_INPUT_GUARD_MS = 600
+let lastSourceInputAt = 0
+
 /** 输入前捕获改动前状态（供撤销快照使用） */
 const onBeforeInput = (e: Event) => {
+  lastSourceInputAt = performance.now()
   const ta = textareaRef.value
   if (!ta) return
   history.capturePending({
@@ -495,6 +539,7 @@ const onBeforeInput = (e: Event) => {
 
 /** 输入时同步内容到父组件 */
 const onInput = (e: Event) => {
+  lastSourceInputAt = performance.now()
   history.push()
   emit('update:modelValue', (e.target as HTMLTextAreaElement).value)
 }
@@ -618,6 +663,9 @@ const updateActiveToc = () => {
 const onPreviewScroll = (e: Event) => {
   updateActiveToc()
   if (isProgrammaticScroll('preview', e.target as HTMLElement)) return
+  // 源码 -> 预览的自动锚定刚发生：后续 scroll 事件即使 scrollTop 已被异步增强改变（clamp），
+  // 也属于程序性滚动，不能反向同步源码，否则会把编辑中的光标行顶到顶部
+  if (performance.now() < previewProgramScrollUntil) return
   // 预览渲染防抖窗口内，预览 DOM 与源码不一致，此时的滚动多为渲染副作用，跳过反向同步
   if (previewRenderPending) return
   // 非用户手势（滚轮 / 触摸 / 指针按下）引起的滚动（如图表/图片异步加载导致高度变化）
@@ -951,6 +999,29 @@ const insertMath = () => {
   insertMarkdown('\n$$\nE = mc^2\n$$\n')
 }
 
+// ========== 插入表情 ==========
+/** 最近使用的表情（首个分组），localStorage 持久化 */
+const recentEmojis = ref<string[]>(loadRecentEmojis())
+
+/** 分组列表：有最近记录时在最前面追加「最近」分组 */
+const emojiGroups = computed<EmojiGroup[]>(() =>
+  recentEmojis.value.length
+    ? [{ key: 'recent', label: '最近', emojis: recentEmojis.value }, ...EMOJI_GROUPS]
+    : EMOJI_GROUPS,
+)
+
+const emojiActiveKey = ref(EMOJI_GROUPS[0].key)
+
+const emojiActiveGroup = computed<EmojiGroup | undefined>(() =>
+  emojiGroups.value.find((g) => g.key === emojiActiveKey.value) ?? emojiGroups.value[0],
+)
+
+/** 插入表情到光标处，并记录到最近使用 */
+const insertEmoji = (emoji: string) => {
+  insertMarkdown(emoji)
+  recentEmojis.value = pushRecentEmoji(emoji)
+}
+
 // ========== 工具栏：数据驱动 + 溢出下拉 ==========
 interface ToolbarItem {
   key: string
@@ -1186,10 +1257,23 @@ const isProgrammaticScroll = (side: 'source' | 'preview', el: HTMLElement): bool
   return Math.abs(el.scrollTop - expected) <= PROGRAM_SCROLL_TOLERANCE
 }
 
+/**
+ * 预览侧「程序性滚动静默期」：源码 -> 预览的自动锚定（含预览重渲染后的统一锚定）之后，
+ * 预览 scrollHeight 可能被代码块高亮 / 图片 / 图表异步增强再次改变，浏览器会把 scrollTop
+ * 重新 clamp 成另一个值，导致上面的「数值相等」判定失效；此时的 scroll 事件会被误当成
+ * 用户滚动而反向同步源码，表现为「光标所在行被顶到编辑器顶部」。
+ * 因此额外用一个纯时间窗兜底，窗口内的预览 scroll 事件一律忽略。
+ */
+const PREVIEW_PROGRAM_SCROLL_GUARD_MS = 400
+let previewProgramScrollUntil = 0
+
 /** 设置滚动位置并打上程序性标记（记录浏览器 clamp 后的实际值，保证判定可靠） */
 const setScrollTop = (side: 'source' | 'preview', el: HTMLElement, value: number) => {
   el.scrollTop = value
   markProgrammaticScroll(side, el.scrollTop)
+  if (side === 'preview') {
+    previewProgramScrollUntil = performance.now() + PREVIEW_PROGRAM_SCROLL_GUARD_MS
+  }
 }
 
 /** 用户在预览区主动滚动（滚轮 / 触摸 / 指针按下）的最近时间 */
@@ -1363,6 +1447,13 @@ const syncSourceFromPreview = () => {
   const preview = previewRef.value
   // 源码区隐藏（全屏预览模式）时不执行同步
   if (!ta || !preview || ta.clientWidth === 0) return
+  // 焦点在源码区（用户正在编辑）：反向同步会把光标行滚出视口，
+  // 之后一旦输入（如回车），浏览器为了让光标可见会把光标所在行顶到视口顶部。
+  // 编辑期间以光标为准，不允许预览的反向同步挪动源码视口。
+  if (document.activeElement === ta) return
+  // 正在输入（打字 / 回车 / 粘贴）：编辑中的源码视口不得被反向同步挪动，
+  // 否则回车触发预览重渲染时，光标所在行会被顶到编辑器视口顶部
+  if (performance.now() - lastSourceInputAt < SOURCE_INPUT_GUARD_MS) return
   const blocks = getLineBlocks()
   if (blocks.length === 0) return
   const previewPaddingTop = parseFloat(getComputedStyle(preview).paddingTop) || 0
@@ -2467,5 +2558,66 @@ defineExpose({
 
 .admonition-sub .el-dropdown-menu__item:hover {
   background-color: var(--el-dropdown-menuItem-hover-fill, #f5f7fa);
+}
+</style>
+
+<!-- 表情选择面板：popover 传送至 body，须用非 scoped 样式 -->
+<style>
+.emoji-trigger {
+  flex-shrink: 0;
+}
+
+.emoji-picker-popover.el-popover {
+  padding: 8px;
+}
+
+.emoji-picker__cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.emoji-picker__cat {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-color-secondary, #909399);
+  padding: 4px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.emoji-picker__cat:hover {
+  background: var(--el-fill-color, #f5f7fa);
+}
+
+.emoji-picker__cat.is-active {
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  color: var(--el-color-primary, #409eff);
+}
+
+.emoji-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  max-height: 236px;
+  overflow-y: auto;
+}
+
+.emoji-picker__item {
+  border: none;
+  background: transparent;
+  font-size: 19px;
+  line-height: 1;
+  padding: 5px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+}
+
+.emoji-picker__item:hover {
+  background: var(--el-fill-color, #f5f7fa);
 }
 </style>
