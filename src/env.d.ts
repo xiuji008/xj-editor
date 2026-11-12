@@ -194,6 +194,8 @@ interface MdAPI {
   openUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   // 系统剪贴板 / 系统拖拽（可复制到桌面等系统位置）
   writeFilesToClipboard: (paths: string[]) => Promise<{ ok: boolean; count?: number; error?: string }>
+  /** 富文本复制：主进程直写 text/html + text/plain（桌面端富文本复制主路径） */
+  writeRichHtml: (html: string, text: string) => Promise<{ ok: boolean; error?: string }>
   startFileDrag: (paths: string[]) => void
   statPath: (filePath: string) => Promise<{ ok: boolean; path?: string; isDirectory?: boolean; size?: number; mtime?: number; error?: string }>
   getPathForFile: (file: File) => string
@@ -206,6 +208,23 @@ interface MdAPI {
   registerFileAssociations: () => Promise<{ ok: boolean; error?: string }>
   unregisterFileAssociations: () => Promise<{ ok: boolean; error?: string }>
   isFileAssociationsRegistered: () => Promise<{ ok: boolean; registered: boolean; error?: string }>
+  // 版本与更新（关于 / 检查更新）
+  /** 当前应用信息：版本号 / 项目主页（非桌面环境返回 null） */
+  appVersion: () => Promise<{ ok: boolean; name: string; version: string; projectUrl: string } | null>
+  /** 检查更新：请求 GitHub Releases 最新版本并与当前版本比较 */
+  checkUpdate: () => Promise<{
+    ok: boolean
+    currentVersion: string
+    latestVersion?: string
+    hasUpdate?: boolean
+    releaseUrl?: string
+    releaseName?: string
+    notes?: string
+    publishedAt?: string
+    error?: string
+  } | null>
+  /** 在系统默认浏览器打开外部链接（仅 http/https） */
+  openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   // AI 配置与对话
   aiGetConfig: () => Promise<AiConfig>
   aiSetConfig: (config: AiConfig) => Promise<{ ok: boolean; error?: string }>

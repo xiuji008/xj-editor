@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('mdAPI', {
   openUrl: (url) => ipcRenderer.invoke('shell:openUrl', { url }),
   // 系统剪贴板 / 系统拖拽（复制文件到桌面等系统位置）
   writeFilesToClipboard: (paths) => ipcRenderer.invoke('clipboard:writeFiles', { paths }),
+  // 富文本复制：主进程直写 text/html + text/plain（桌面端富文本复制的主路径）
+  writeRichHtml: (html, text) => ipcRenderer.invoke('clipboard:writeRich', { html, text }),
   startFileDrag: (paths) => ipcRenderer.send('drag:startFiles', { paths }),
   // 查询路径是文件还是目录
   statPath: (filePath) => ipcRenderer.invoke('file:stat', { filePath }),
@@ -141,6 +143,10 @@ contextBridge.exposeInMainWorld('mdAPI', {
   registerFileAssociations: () => ipcRenderer.invoke('fileassoc:register'),
   unregisterFileAssociations: () => ipcRenderer.invoke('fileassoc:unregister'),
   isFileAssociationsRegistered: () => ipcRenderer.invoke('fileassoc:status'),
+  // 版本与更新（关于 / 检查更新）
+  appVersion: () => ipcRenderer.invoke('app:getVersion'),
+  checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
+  openExternalUrl: (url) => ipcRenderer.invoke('app:openExternal', { url }),
   // AI 配置与对话
   aiGetConfig: () => ipcRenderer.invoke('ai:getConfig'),
   aiSetConfig: (config) => ipcRenderer.invoke('ai:setConfig', config),

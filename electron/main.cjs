@@ -1470,6 +1470,80 @@ ipcMain.handle('app:getImagesDir', async () => {
   }
 })
 
+// ==================== 版本 / 检查更新（GitHub Releases） ====================
+const GITHUB_OWNER = 'xiuji008'
+const GITHUB_REPO = 'xj-editor'
+const GITHUB_PROJECT_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`
+const GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
+
+/** 当前应用版本号（package.json version） */
+ipcMain.handle('app:getVersion', () => {
+  return { ok: true, name: app.getName(), version: app.getVersion(), projectUrl: GITHUB_PROJECT_URL }
+})
+
+/**
+ * 检查更新：请求 GitHub Releases 最新版本并与当前版本比较。
+ * 网络不可用 / 请求失败时返回 ok=false 与错误信息，不弹窗打扰。
+ */
+ipcMain.handle('app:checkUpdate', async () => {
+  const currentVersion = app.getVersion()
+  try {
+    // 12s 超时：GitHub API 偶发连不上，避免界面一直转圈
+    const res = await net.fetch(GITHUB_LATEST_RELEASE_API, {
+      headers: { 'User-Agent': `${GITHUB_REPO}-updater`, Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(12000),
+    })
+    if (!res.ok) {
+      const error = res.status === 404 ? '项目暂未发布 Release' : `GitHub 返回 ${res.status}`
+      return { ok: false, currentVersion, error }
+    }
+    const data = await res.json()
+    const latestVersion = String(data.tag_name || '').replace(/^v/i, '')
+    if (!latestVersion) {
+      return { ok: false, currentVersion, error: '未获取到最新版本号' }
+    }
+    return {
+      ok: true,
+      currentVersion,
+      latestVersion,
+      hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
+      releaseUrl: data.html_url || GITHUB_PROJECT_URL,
+      releaseName: data.name || '',
+      notes: typeof data.body === 'string' ? data.body.slice(0, 4000) : '',
+      publishedAt: data.published_at || '',
+    }
+  } catch (err) {
+    return { ok: false, currentVersion, error: err && err.message ? err.message : '网络请求失败' }
+  }
+})
+
+/**
+ * 比较两个点分版本号：a > b 返回 1，a < b 返回 -1，相等返回 0。
+ * 仅支持数字段（1.2.10），非数字段按 0 处理。
+ */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map((n) => Number.parseInt(n, 10) || 0)
+  const pb = String(b).split('.').map((n) => Number.parseInt(n, 10) || 0)
+  const len = Math.max(pa.length, pb.length)
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] || 0
+    const nb = pb[i] || 0
+    if (na > nb) return 1
+    if (na < nb) return -1
+  }
+  return 0
+}
+
+/** 在系统默认浏览器中打开外部链接（仅允许 http / https） */
+ipcMain.handle('app:openExternal', (_event, payload = {}) => {
+  const url = String(payload.url || '')
+  if (!/^https?:\/\//i.test(url)) return { ok: false, error: '不支持的链接' }
+  return shell.openExternal(url).then(
+    () => ({ ok: true }),
+    (err) => ({ ok: false, error: err && err.message ? err.message : '打开失败' }),
+  )
+})
+
 // ==================== 暂存文件（内置草稿本） ====================
 // 应用内置的固定文件，用于临时拷贝 / 暂存信息：
 // 优先放在安装目录（exe 所在目录），不可写（如 Program Files）时回退到应用数据目录。
@@ -1855,6 +1929,37 @@ function writeFilesToClipboard(paths) {
 // 复制文件 / 文件夹到系统剪贴板：可在桌面或任意文件夹按 Ctrl+V 粘贴
 ipcMain.handle('clipboard:writeFiles', (_event, payload) => {
   return writeFilesToClipboard(payload?.paths)
+})
+
+// HTML → 纯文本（主进程无 DOM，用正则剥标签），用于富文本剪贴板的 text/plain 兜底
+function htmlToPlainText(html) {
+  return html
+    .replace(/<(style|script)[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|h[1-6]|li|tr|blockquote|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+// 富文本复制：直接在主进程写系统剪贴板（text/html + text/plain）。
+// 渲染进程的 execCommand('copy') 依赖文档焦点 / 用户手势，任一不满足就会退化成纯文本；
+// 主进程 clipboard.write 无此限制，桌面端富文本复制一律优先走这里。
+ipcMain.handle('clipboard:writeRich', (_event, payload) => {
+  try {
+    const html = typeof payload?.html === 'string' ? payload.html : ''
+    const text = typeof payload?.text === 'string' ? payload.text : ''
+    if (!html && !text) return { ok: false, error: '内容为空' }
+    clipboard.write({ html, text: text || htmlToPlainText(html) })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
 })
 
 // 目录树节点拖拽：发起系统级文件拖拽，可直接拖到桌面 / 任意文件夹，效果等同复制

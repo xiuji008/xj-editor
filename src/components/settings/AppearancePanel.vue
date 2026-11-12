@@ -12,6 +12,26 @@
         </div>
       </el-form-item>
 
+      <el-form-item label="编辑区底色">
+        <div class="bg-swatches">
+          <button
+            v-for="opt in EDITOR_BG_OPTIONS"
+            :key="opt.value"
+            type="button"
+            class="bg-swatch"
+            :class="{ 'is-active': opt.value === editorBg }"
+            :title="opt.label"
+            @click="onEditorBgChange(opt.value)"
+          >
+            <span class="bg-swatch-color" :style="{ background: opt.color }" />
+            <span>{{ opt.label }}</span>
+          </button>
+        </div>
+        <div class="form-tip">
+          Markdown 源码编辑区（源码面板与文本框）的底色，默认「浅灰」与白板页面底色一致；仅浅色模式生效，深色模式保持原有深色底。
+        </div>
+      </el-form-item>
+
       <el-form-item label="默认视图模式">
         <el-radio-group :model-value="viewMode" @update:model-value="onViewModeChange">
           <el-radio-button v-for="opt in viewOptions" :key="opt.value" :value="opt.value">
@@ -118,6 +138,7 @@ import {
   getFontStack,
 } from '../../utils/fonts'
 import { useTheme, type AppTheme } from '../../composables/useTheme'
+import { DEFAULT_EDITOR_BG, EDITOR_BG_OPTIONS } from '../../utils/editorBackground'
 
 /** 视图模式：编辑 / 分屏 / 预览 */
 type ViewMode = 'edit' | 'split' | 'preview'
@@ -131,10 +152,13 @@ const props = withDefaults(defineProps<{
   previewFont?: string
   /** 当前源码编辑区字体 */
   sourceFont?: string
+  /** 当前 Markdown 编辑区底色（内置浅色底色的 value） */
+  editorBg?: string
 }>(), {
   codeTheme: DEFAULT_CODE_THEME,
   previewFont: DEFAULT_PREVIEW_FONT,
   sourceFont: DEFAULT_SOURCE_FONT,
+  editorBg: DEFAULT_EDITOR_BG,
 })
 
 const emit = defineEmits<{
@@ -142,6 +166,7 @@ const emit = defineEmits<{
   (e: 'update:codeTheme', value: string): void
   (e: 'update:previewFont', value: string): void
   (e: 'update:sourceFont', value: string): void
+  (e: 'update:editorBg', value: string): void
 }>()
 
 /** 视图模式选项（与工具栏视图切换一致） */
@@ -177,6 +202,7 @@ const onThemeChange = (value: string | number | boolean) => setTheme(value as Ap
 const onCodeThemeChange = (value: string) => emit('update:codeTheme', value)
 const onPreviewFontChange = (value: string) => emit('update:previewFont', value)
 const onSourceFontChange = (value: string) => emit('update:sourceFont', value)
+const onEditorBgChange = (value: string) => emit('update:editorBg', value)
 </script>
 
 <style scoped>
@@ -196,6 +222,44 @@ const onSourceFontChange = (value: string) => emit('update:sourceFont', value)
   font-size: 12px;
   color: var(--text-color-secondary);
   margin-bottom: 6px;
+}
+
+/* ========== 编辑区底色色块 ========== */
+.bg-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bg-swatch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 3px;
+  font-size: 12px;
+  color: var(--text-color-regular);
+  background: var(--bg-color-white);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.bg-swatch:hover {
+  border-color: var(--color-primary-light-5);
+}
+
+.bg-swatch.is-active {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary-light-7);
+}
+
+.bg-swatch-color {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color-light);
 }
 
 /* ========== 字体样例 ========== */

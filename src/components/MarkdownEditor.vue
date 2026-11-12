@@ -23,6 +23,40 @@
                 @click="it.action"
               >{{ it.label }}</el-button>
             </el-tooltip>
+            <!-- 插入表情：分类标签 + 表情格子，点击插入到光标处 -->
+            <el-popover
+              trigger="click"
+              placement="bottom-end"
+              :width="332"
+              :persistent="false"
+              popper-class="emoji-picker-popover"
+            >
+              <template #reference>
+                <el-button text size="small" class="emoji-trigger" title="插入表情">表情</el-button>
+              </template>
+              <div class="emoji-picker">
+                <div class="emoji-picker__cats">
+                  <button
+                    v-for="g in emojiGroups"
+                    :key="g.key"
+                    type="button"
+                    class="emoji-picker__cat"
+                    :class="{ 'is-active': emojiActiveKey === g.key }"
+                    @click="emojiActiveKey = g.key"
+                  >{{ g.label }}</button>
+                </div>
+                <div v-if="emojiActiveGroup" class="emoji-picker__grid">
+                  <button
+                    v-for="(e, i) in emojiActiveGroup.emojis"
+                    :key="emojiActiveGroup.key + '-' + i"
+                    type="button"
+                    class="emoji-picker__item"
+                    :title="e"
+                    @click="insertEmoji(e)"
+                  >{{ e }}</button>
+                </div>
+              </div>
+            </el-popover>
             <!-- 更多：高级按钮 + 提示块（可按类型选择）+ 溢出的基础按钮 -->
             <el-dropdown trigger="click" class="more-dropdown" @command="onMoreCommand">
               <el-button text size="small" class="more-btn" title="更多">
@@ -61,40 +95,6 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
-            <!-- 插入表情：分类标签 + 表情格子，点击插入到光标处 -->
-            <el-popover
-              trigger="click"
-              placement="bottom-end"
-              :width="332"
-              :persistent="false"
-              popper-class="emoji-picker-popover"
-            >
-              <template #reference>
-                <el-button text size="small" class="emoji-trigger" title="插入表情">表情</el-button>
-              </template>
-              <div class="emoji-picker">
-                <div class="emoji-picker__cats">
-                  <button
-                    v-for="g in emojiGroups"
-                    :key="g.key"
-                    type="button"
-                    class="emoji-picker__cat"
-                    :class="{ 'is-active': emojiActiveKey === g.key }"
-                    @click="emojiActiveKey = g.key"
-                  >{{ g.label }}</button>
-                </div>
-                <div v-if="emojiActiveGroup" class="emoji-picker__grid">
-                  <button
-                    v-for="(e, i) in emojiActiveGroup.emojis"
-                    :key="emojiActiveGroup.key + '-' + i"
-                    type="button"
-                    class="emoji-picker__item"
-                    :title="e"
-                    @click="insertEmoji(e)"
-                  >{{ e }}</button>
-                </div>
-              </div>
-            </el-popover>
           </div>
           <!-- 额外工具栏内容（如放大按钮），始终可见 -->
           <div class="pane-extra">
@@ -169,8 +169,16 @@
           <span class="pane-title">
             <el-icon><View /></el-icon> 预览
           </span>
-          <!-- 预览区右上角：缩放 + 目录导航 -->
+          <!-- 预览区右上角：复制 / 缩放 / 目录导航 -->
           <div class="pane-extra pane-extra-right">
+            <!-- 复制：Markdown 源码 / 公众号格式（可选主题）/ 知乎 / 掘金 / 长图 PNG -->
+            <CopyMenu
+              :markdown="modelValue"
+              :code-theme="codeTheme"
+              :file-name="fileName"
+              :source-el="previewInnerRef || null"
+            />
+            <el-divider direction="vertical" class="preview-extra-divider" />
             <!-- 预览缩放：缩小 / 当前比例（点击恢复 100%）/ 放大，支持 Ctrl + 滚轮 -->
             <div class="zoom-tools">
               <el-tooltip content="缩小预览（Ctrl + 滚轮）" placement="bottom">
@@ -363,6 +371,7 @@ import { useTextareaHistory } from '../utils/history'
 import { EMOJI_GROUPS, loadRecentEmojis, pushRecentEmoji, type EmojiGroup } from '../utils/emojiData'
 import FindBar from './FindBar.vue'
 import PreviewFindBar from './PreviewFindBar.vue'
+import CopyMenu from './CopyMenu.vue'
 
 const props = withDefaults(defineProps<{
   /** Markdown 内容（v-model） */
@@ -1867,6 +1876,12 @@ defineExpose({
   margin-left: auto;
 }
 
+/* 复制 / 缩放之间的分隔线 */
+.preview-extra-divider {
+  height: 14px;
+  margin: 0 4px;
+}
+
 /* ========== 预览缩放控件 ========== */
 .zoom-tools {
   display: flex;
@@ -2015,6 +2030,12 @@ defineExpose({
   color: var(--text-color-primary);
   background: var(--bg-color-white);
   tab-size: 2;
+}
+
+/* 明亮模式下编辑区底色取自「设置 → 外观 → 编辑区底色」（默认浅灰，与白板一致），深色模式保持原样 */
+html:not(.dark) .source-pane,
+html:not(.dark) .source-textarea {
+  background: var(--md-editor-bg, var(--bg-color-page));
 }
 
 .source-textarea:focus {

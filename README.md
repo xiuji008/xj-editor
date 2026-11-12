@@ -1,5 +1,7 @@
 # Markdown 桌面编辑器（XJ-Editor）
 
+[English](README.en.md)
+
 一款为「自己」而写的桌面版 Markdown 编辑器，可在 Windows 上独立运行。
 
 ## 为什么做这个程序

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
-import { ElMessage, ElMessageBox, ElLoading, ElTree } from 'element-plus'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, defineAsyncComponent, h, reactive } from 'vue'
+import { ElMessage, ElMessageBox, ElLoading, ElTree, ElInput, ElSelect, ElOption } from 'element-plus'
 import {
   Plus,
   FolderOpened,
@@ -36,6 +36,7 @@ import {
   VideoPlay,
   Search,
   Loading,
+  QuestionFilled,
 } from '@element-plus/icons-vue'
 import MarkdownEditor from './components/MarkdownEditor.vue'
 import HtmlEditor from './components/HtmlEditor.vue'
@@ -49,6 +50,8 @@ import AiChatWindow from './components/AiChatWindow.vue'
 import AiLogDialog from './components/AiLogDialog.vue'
 import SettingsDialog from './components/settings/SettingsDialog.vue'
 import PdfExportDialog from './components/PdfExportDialog.vue'
+import HelpDialog from './components/HelpDialog.vue'
+import AboutDialog from './components/AboutDialog.vue'
 import GitPanel from './components/GitPanel.vue'
 import GitDiffDialog from './components/GitDiffDialog.vue'
 import GitHistoryDialog from './components/GitHistoryDialog.vue'
@@ -96,6 +99,7 @@ import {
   getFontStack,
   readStoredFont,
 } from './utils/fonts'
+import { EDITOR_BG_KEY, applyEditorBg, readStoredEditorBg } from './utils/editorBackground'
 import katexCss from 'katex/dist/katex.min.css?inline'
 
 /* ========== 文件状态 ========== */
@@ -165,6 +169,17 @@ watch(previewFont, (value) => {
 watch(sourceFont, (value) => {
   localStorage.setItem(SOURCE_FONT_KEY, value)
   flushFonts()
+})
+
+/**
+ * Markdown 编辑区底色：内置几种浅色底，写入 CSS 变量 `--md-editor-bg`，
+ * 只有浅色模式生效（深色模式样式对变量做了 `html:not(.dark)` 限定）。
+ */
+const editorBg = ref(readStoredEditorBg())
+applyEditorBg(editorBg.value)
+watch(editorBg, (value) => {
+  localStorage.setItem(EDITOR_BG_KEY, value)
+  applyEditorBg(value)
 })
 
 /**
@@ -2054,18 +2069,73 @@ function rememberExternalTerminal(id: string) {
   externalSubmenu.value = false
 }
 
-/** 新建文件（在目标节点所在目录） */
+/** 新建文件可选类型（目录树右键弹窗下拉项） */
+const NEW_FILE_TYPES = [
+  { label: 'Markdown 文档', ext: '.md' },
+  { label: '纯文本', ext: '.txt' },
+  { label: 'JSON', ext: '.json' },
+  { label: '白板', ext: '.board' },
+  { label: 'SQL', ext: '.sql' },
+  { label: 'HTML', ext: '.html' },
+  { label: 'XML', ext: '.xml' },
+  { label: 'YAML', ext: '.yml' },
+  { label: 'CSV', ext: '.csv' },
+]
+
+/** 依据当前文件名与所选类型计算最终文件名：
+ * 名字已带扩展名（如手动输入 foo.txt）则尊重用户输入，否则追加所选类型扩展名 */
+function resolveNewFileName(name: string, ext: string): string {
+  return /\.[^./\\]+$/.test(name) ? name : name + ext
+}
+
+/** 新建文件（在目标节点所在目录），弹窗内可下拉选择文件类型，默认 Markdown */
 async function createFileAt(node: TreeNode) {
   hideContextMenu()
   const dir = node.isDirectory ? node.path : dirname(node.path)
-  const { value } = await ElMessageBox.prompt('输入文件名（支持 .md / .txt 等）', '新建文件', {
+  const state = reactive({ name: '新建文档', ext: '.md' })
+  const action = await ElMessageBox({
+    title: '新建文件',
+    showCancelButton: true,
     confirmButtonText: '创建',
     cancelButtonText: '取消',
-    inputValue: '新建文档.md',
-    inputValidator: (v: string) => (v && v.trim() ? true : '文件名不能为空'),
-  }).catch(() => ({ value: '' as string }))
-  const name = (value || '').trim()
-  if (!name) return
+    customStyle: { maxWidth: '360px' },
+    message: h('div', { style: 'display:flex;flex-direction:column;gap:12px;padding-top:4px;' }, [
+      h(ElInput, {
+        modelValue: state.name,
+        'onUpdate:modelValue': (v: string) => (state.name = v),
+        placeholder: '输入文件名（可手动带扩展名）',
+        autofocus: true,
+      }),
+      h(ElSelect, {
+        modelValue: state.ext,
+        'onUpdate:modelValue': (v: string) => {
+          state.ext = v
+          // 切换类型时同步替换文件名末尾的已知扩展名（没有扩展名则追加）
+          const known = NEW_FILE_TYPES.map((t) => t.ext)
+          const m = /(\.[^./\\]+)$/.exec(state.name)
+          if (m && known.includes(m[1].toLowerCase())) {
+            state.name = state.name.slice(0, -m[1].length) + v
+          } else if (!m) {
+            state.name = state.name + v
+          }
+        },
+      }, () => NEW_FILE_TYPES.map((t) => h(ElOption, { key: t.ext, label: `${t.label}（${t.ext}）`, value: t.ext }))),
+    ]),
+    beforeClose: (action: string, _ctx: unknown, done: () => void) => {
+      if (action !== 'confirm') {
+        done()
+        return
+      }
+      if (!state.name.trim()) {
+        ElMessage.warning('文件名不能为空')
+        return
+      }
+      done()
+    },
+  }).catch(() => '')
+  if (action !== 'confirm') return
+  const name = resolveNewFileName(state.name.trim(), state.ext)
+  if (!name || name === '.') return
   const res = await window.mdAPI?.createFile(dir, name)
   if (!res?.ok) {
     ElMessage.error(`创建失败：${res?.error || '未知错误'}`)
@@ -2486,6 +2556,28 @@ provideToolContext({
 
 /* ========== 设置（外观 / 图床 / PlantUML / AI / 文件关联的统一入口） ========== */
 const settingsVisible = ref(false)
+
+/* ========== 帮助 / 检查更新 / 关于 ========== */
+const helpVisible = ref(false)
+const aboutVisible = ref(false)
+/** 关于弹窗打开时是否立即检查更新（「检查更新」菜单项使用） */
+const aboutAutoCheck = ref(false)
+
+/**
+ * 帮助下拉菜单：帮助文档（F1） / 检查更新 / 关于
+ * @param command 'help' | 'update' | 'about'
+ */
+function onHelpCommand(command: string) {
+  if (command === 'help') {
+    helpVisible.value = true
+  } else if (command === 'update') {
+    aboutAutoCheck.value = true
+    aboutVisible.value = true
+  } else if (command === 'about') {
+    aboutAutoCheck.value = false
+    aboutVisible.value = true
+  }
+}
 
 /**
  * 从设置窗口打开 AI 调用日志：
@@ -2912,6 +3004,12 @@ function chooseExternalTerminal(node: TreeNode, id: string) {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  // F1：打开帮助文档
+  if (e.key === 'F1') {
+    e.preventDefault()
+    helpVisible.value = true
+    return
+  }
   // F12：随时切换开发者工具（类似浏览器 F12 调试）
   if (e.key === 'F12') {
     e.preventDefault()
@@ -3171,6 +3269,18 @@ const viewOptions = [
         <el-tooltip content="设置（外观 / 图床 / PlantUML / AI / 文件关联）" placement="bottom">
           <el-button :icon="Setting" @click="settingsVisible = true" />
         </el-tooltip>
+
+        <!-- 帮助：帮助文档（F1） / 检查更新 / 关于 -->
+        <el-dropdown trigger="click" @command="onHelpCommand">
+          <el-button :icon="QuestionFilled" />
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="help">帮助文档（F1）</el-dropdown-item>
+              <el-dropdown-item command="update">检查更新</el-dropdown-item>
+              <el-dropdown-item command="about">关于 XJ-Editor</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
 
       <div class="header-file" :class="{ dirty: isDirty }">
@@ -3655,6 +3765,7 @@ const viewOptions = [
       v-model:code-theme="codeTheme"
       v-model:preview-font="previewFont"
       v-model:source-font="sourceFont"
+      v-model:editor-bg="editorBg"
       @open-ai-log="openAiLogFromSettings"
     />
 
@@ -3689,6 +3800,12 @@ const viewOptions = [
 
     <!-- 从 Git 打开（克隆远程仓库后自动打开该项目目录） -->
     <GitCloneDialog v-model="gitCloneVisible" :default-parent-dir="gitCloneParentDir" @cloned="onGitCloned" />
+
+    <!-- 帮助文档（功能介绍 / 快捷键 / Markdown 语法 / 代码块语言） -->
+    <HelpDialog v-model="helpVisible" />
+
+    <!-- 关于 / 检查更新（autoCheck 为真时打开即自动检查） -->
+    <AboutDialog v-model="aboutVisible" :auto-check="aboutAutoCheck" @open-help="onHelpCommand('help')" />
   </div>
 </template>
 
