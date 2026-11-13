@@ -11,6 +11,13 @@
     <!-- React 子树挂载点（Excalidraw 填满容器） -->
     <div v-show="!loadError" ref="containerRef" class="wb-canvas" />
 
+    <!-- AI 画图入口（悬浮画布右上角，位于导出下拉左侧） -->
+    <div v-if="ready && !loadError" class="wb-ai">
+      <el-button size="small" text :type="aiPanelVisible ? 'primary' : ''" @click="aiPanelVisible = !aiPanelVisible">
+        <el-icon class="wb-ai__label"><MagicStick /></el-icon>AI 画图
+      </el-button>
+    </div>
+
     <!-- 导出下拉（悬浮画布右上角） -->
     <div v-if="ready && !loadError" class="wb-export">
       <el-dropdown trigger="click" @command="onExport">
@@ -25,18 +32,35 @@
         </template>
       </el-dropdown>
     </div>
+
+    <!-- AI 画图面板（右侧覆盖抽屉） -->
+    <WhiteboardAiPanel
+      v-if="ready && !loadError"
+      :visible="aiPanelVisible"
+      :workspace-root="workspaceRoot || ''"
+      :scene-summary="buildSceneSummary"
+      :apply-pending="applyPending"
+      :discard-pending="discardPending"
+      @update:visible="aiPanelVisible = $event"
+      @undo="onUndoLastApply"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { WarningFilled, Download } from '@element-plus/icons-vue'
+import { WarningFilled, Download, MagicStick } from '@element-plus/icons-vue'
 import { toMdLocalUrl } from '../utils/fileUtils'
 import { useTheme } from '../composables/useTheme'
+import { emitBusEvent, type WhiteboardPendingPayload } from '../utils/excalidraw/agentBus'
+import { validateSpec } from '../utils/excalidraw/specSchema'
+import { compileSpec } from '../utils/excalidraw/sceneCompiler'
+import WhiteboardAiPanel from './WhiteboardAiPanel.vue'
 import {
   loadExcalidraw,
   mountExcalidraw,
+  type ExcalidrawApiLike,
   type ExcalidrawHandle,
   type ExcalidrawModule,
 } from './whiteboard/excalidrawBridge'
@@ -44,6 +68,8 @@ import {
 const props = defineProps<{
   /** 白板文件绝对路径（.board / .excalidraw，内容为 Excalidraw 开放 JSON） */
   filePath: string
+  /** 当前 workspace 根目录（agent skill 扫描用） */
+  workspaceRoot?: string
 }>()
 
 const { isDark } = useTheme()
@@ -52,9 +78,12 @@ const containerRef = ref<HTMLElement | null>(null)
 const ready = ref(false)
 const loadError = ref('')
 const exporting = ref(false)
+const aiPanelVisible = ref(false)
 
 /** React 实例句柄 */
 let handle: ExcalidrawHandle | null = null
+/** Excalidraw 实例 API（agent 写画布 / 摘要用） */
+let apiRef: ExcalidrawApiLike | null = null
 /** 动态加载的 Excalidraw 模块（含 exportToBlob / serializeAsJSON 等） */
 let exMod: ExcalidrawModule | null = null
 /** 最近一次 onChange 的场景快照（保存 / 导出用） */
@@ -69,6 +98,12 @@ let saveTimer: number | null = null
 let disposed = false
 /** 串扰防护：打开文件时的加载序号 */
 let loadToken = 0
+/** agent 生成的待插入产物：pendingId -> { elements, summary, mode } */
+const pendingMap = new Map<string, { elements: unknown[]; summary: string; mode: 'append' | 'replace' }>()
+/** agent 应用前的场景快照栈（撤销上次插入用，最多 10 层） */
+const undoStack: unknown[][] = []
+/** 工具调用订阅取消函数（agent 反向 IPC） */
+let unsubToolCall: (() => void) | null = null
 
 /* ========== 打开与渲染 ========== */
 
@@ -119,12 +154,16 @@ async function openBoard() {
 async function mountScene(initial: { elements?: readonly unknown[]; appState?: Record<string, unknown> }) {
   handle?.unmount()
   handle = null
+  apiRef = null
   if (!containerRef.value) return
   handle = await mountExcalidraw(containerRef.value, {
     initialData: initial,
     theme: isDark.value ? 'dark' : 'light',
     langCode: 'zh-CN',
     onChange: onSceneChange,
+    excalidrawAPI: (api) => {
+      apiRef = api
+    },
   })
 }
 
@@ -177,7 +216,166 @@ async function saveNow() {
   }
 }
 
-defineExpose({ saveNow })
+defineExpose({ saveNow, undoLastApply })
+
+/* ========== Agent：工具执行（反向 IPC） ========== */
+
+/** 画布摘要（模型上下文，不给全量 JSON） */
+function buildSceneSummary(): {
+  elementCount: number
+  typeCounts: Record<string, number>
+  selected: Array<{ id: string; type: string; text: string }>
+  note: string
+} {
+  const typeCounts: Record<string, number> = {}
+  for (const el of sceneElements as Array<Record<string, unknown>>) {
+    const type = String(el?.type || 'unknown')
+    typeCounts[type] = (typeCounts[type] || 0) + 1
+  }
+  const selectedIds = new Set(Object.keys((sceneAppState.selectedElementIds as Record<string, unknown>) || {}))
+  const selected: Array<{ id: string; type: string; text: string }> = []
+  for (const el of sceneElements as Array<Record<string, unknown>>) {
+    if (!selectedIds.has(String(el?.id || ''))) continue
+    const text = typeof el?.text === 'string' ? el.text.slice(0, 80) : ''
+    selected.push({ id: String(el?.id || ''), type: String(el?.type || ''), text })
+    if (selected.length >= 30) break
+  }
+  return {
+    elementCount: sceneElements.length,
+    typeCounts,
+    selected,
+    note: 'selected 仅在用户框选了元素时非空；画布为空时 elementCount 为 0',
+  }
+}
+
+/** 执行 agent 工具调用（agent.cjs 反向下发） */
+async function executeAgentTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  if (name === 'whiteboard_get_scene') return buildSceneSummary()
+  if (name === 'whiteboard_apply_elements') return generatePending(args)
+  throw new Error(`未知工具：${name}`)
+}
+
+async function handleAgentToolCall(call: { runId: string; callId: string; name: string; args: Record<string, unknown> }) {
+  try {
+    const data = await executeAgentTool(call.name, call.args || {})
+    window.mdAPI?.agent.toolResult({ runId: call.runId, callId: call.callId, ok: true, data })
+  } catch (err) {
+    window.mdAPI?.agent.toolResult({
+      runId: call.runId,
+      callId: call.callId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+/** 编译 spec 生成待插入产物 + 预览（不直接落画布，等待用户确认） */
+async function generatePending(args: Record<string, unknown>): Promise<{
+  ok: boolean
+  pendingId: string
+  summary: string
+  elementCount: number
+  note: string
+}> {
+  if (!exMod) throw new Error('Excalidraw 模块未就绪')
+  const spec = args?.spec
+  const { ok, issues } = validateSpec(spec)
+  if (!ok) {
+    throw new Error(`spec 校验失败：${issues.map((i) => `${i.path} ${i.message}`).join('；')}`)
+  }
+  const compiled = compileSpec(spec as never)
+  if (!compiled) throw new Error('spec 编译失败')
+  const elements = exMod.convertToExcalidrawElements(compiled.skeletons, { regenerateIds: true })
+  const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const mode = args?.mode === 'replace' ? 'replace' : 'append'
+  pendingMap.set(pendingId, { elements, summary: compiled.summary, mode })
+
+  // 预览 SVG（img 可直接展示）
+  let previewUrl = ''
+  try {
+    const svg = await exMod.exportToSvg({
+      elements,
+      appState: { exportBackgroundColor: isDark.value ? '#1d1e20' : '#ffffff' },
+      files: null,
+      exportPadding: 16,
+    })
+    const xml = new XMLSerializer().serializeToString(svg)
+    previewUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`
+  } catch {
+    previewUrl = ''
+  }
+
+  const payload: WhiteboardPendingPayload = {
+    pendingId,
+    previewUrl,
+    elementCount: elements.length,
+    summary: compiled.summary,
+    mode,
+  }
+  onBusEventEmit(payload)
+  return {
+    ok: true,
+    pendingId,
+    summary: compiled.summary,
+    elementCount: elements.length,
+    note: '预览已生成并展示给用户，等待用户点击插入/替换；不要重复调用本工具，改用文字告知用户查看预览',
+  }
+}
+
+/** 触发白板待插入广播（供 AI 面板订阅展示） */
+function onBusEventEmit(payload: WhiteboardPendingPayload) {
+  emitBusEvent('wb-pending', payload)
+}
+
+/** 记录撤销快照（应用前调用） */
+function pushUndoSnapshot() {
+  undoStack.push([...sceneElements])
+  if (undoStack.length > 10) undoStack.shift()
+}
+
+/** 应用待插入产物（面板确认后调用） */
+function applyPending(pendingId: string, mode?: 'append' | 'replace'): boolean {
+  const pending = pendingMap.get(pendingId)
+  if (!pending || !apiRef) return false
+  pushUndoSnapshot()
+  const effective = mode || pending.mode
+  const next = effective === 'replace' ? pending.elements : [...sceneElements, ...pending.elements]
+  try {
+    apiRef.updateScene({ elements: next })
+    apiRef.scrollToContent(pending.elements, { fitToViewport: true, viewportZoomFactor: 0.8 })
+  } catch (err) {
+    console.warn('[whiteboard] applyPending 失败', err)
+    return false
+  }
+  pendingMap.delete(pendingId)
+  // updateScene 触发 onChange 后由防抖自动保存；这里再补一次立即保存保证落盘
+  setTimeout(() => void saveNow(), 200)
+  return true
+}
+
+/** 丢弃待插入产物 */
+function discardPending(pendingId: string): boolean {
+  return pendingMap.delete(pendingId)
+}
+
+/** 撤销上次 agent 插入（恢复应用前的场景） */
+function undoLastApply(): boolean {
+  const snapshot = undoStack.pop()
+  if (!snapshot || !apiRef) return false
+  try {
+    apiRef.updateScene({ elements: snapshot })
+    setTimeout(() => void saveNow(), 200)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** AI 面板撤销按钮 */
+function onUndoLastApply() {
+  if (undoLastApply()) ElMessage.success('已撤销上次 AI 插入')
+  else ElMessage.warning('没有可撤销的 AI 插入')
+}
 
 /* ========== 导出 ========== */
 
@@ -232,7 +430,14 @@ async function onExport(command: string) {
 
 // 深浅主题切换：仅更新 Excalidraw 的 theme props（重传 initialData 不会重置场景，但为稳妥起见不传）
 watch(isDark, (dark) => {
-  handle?.update({ theme: dark ? 'dark' : 'light', langCode: 'zh-CN', onChange: onSceneChange })
+  handle?.update({
+    theme: dark ? 'dark' : 'light',
+    langCode: 'zh-CN',
+    onChange: onSceneChange,
+    excalidrawAPI: (api) => {
+      apiRef = api
+    },
+  })
 })
 
 // 同一组件实例下切换白板文件：重开场景
@@ -245,13 +450,22 @@ watch(
 
 onMounted(() => {
   void openBoard()
+  // agent 工具调用监听（白板视图即工具执行器）
+  unsubToolCall = window.mdAPI?.agent.onToolCall((call) => {
+    void handleAgentToolCall(call)
+  }) || null
 })
 
 onBeforeUnmount(() => {
   disposed = true
   if (saveTimer !== null) clearTimeout(saveTimer)
+  unsubToolCall?.()
+  unsubToolCall = null
   handle?.unmount()
   handle = null
+  apiRef = null
+  pendingMap.clear()
+  undoStack.length = 0
 })
 </script>
 
@@ -275,6 +489,18 @@ onBeforeUnmount(() => {
   top: 48px;
   right: 16px;
   z-index: 30;
+}
+
+/* AI 画图按钮：位于导出下拉左侧 */
+.wb-ai {
+  position: absolute;
+  top: 48px;
+  right: 96px;
+  z-index: 30;
+}
+
+.wb-ai__label {
+  margin-right: 2px;
 }
 
 .wb-export__label {

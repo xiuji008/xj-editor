@@ -318,4 +318,33 @@ contextBridge.exposeInMainWorld('mdAPI', {
     set: (config) => ipcRenderer.invoke('quickAi:set', config),
     reset: (payload) => ipcRenderer.invoke('quickAi:reset', payload || {}),
   },
+  // Agent Skill 管理（workspace/.xj/skills + 内置）
+  skills: {
+    list: (workspaceRoot) => ipcRenderer.invoke('skills:list', { workspaceRoot }),
+    get: (payload) => ipcRenderer.invoke('skills:get', payload || {}),
+    readResource: (payload) => ipcRenderer.invoke('skills:readResource', payload || {}),
+    import: (payload) => ipcRenderer.invoke('skills:import', payload || {}),
+    remove: (payload) => ipcRenderer.invoke('skills:remove', payload || {}),
+    setEnabled: (payload) => ipcRenderer.invoke('skills:setEnabled', payload || {}),
+    reveal: (payload) => ipcRenderer.invoke('skills:reveal', payload || {}),
+  },
+  // Agent 运行（skill 执行；事件经 onAgentEvent 推送，工具调用经 onAgentToolCall 反向下发）
+  agent: {
+    run: (payload) => ipcRenderer.invoke('agent:run', payload || {}),
+    stop: (runId) => ipcRenderer.invoke('agent:stop', { runId }),
+    /** 渲染进程工具执行完成后回传结果（对应 agent:tool-call 的 callId） */
+    toolResult: (payload) => ipcRenderer.send('agent:tool-result', payload || {}),
+    /** 订阅 agent 运行事件（text-delta / reasoning-delta / tool-start / tool-result / done / error），返回取消订阅函数 */
+    onEvent: (callback) => {
+      const listener = (_event, data) => callback(data || {})
+      ipcRenderer.on('agent:event', listener)
+      return () => ipcRenderer.removeListener('agent:event', listener)
+    },
+    /** 订阅工具调用请求，返回取消订阅函数 */
+    onToolCall: (callback) => {
+      const listener = (_event, data) => callback(data || {})
+      ipcRenderer.on('agent:tool-call', listener)
+      return () => ipcRenderer.removeListener('agent:tool-call', listener)
+    },
+  },
 })

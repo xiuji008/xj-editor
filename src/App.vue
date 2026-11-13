@@ -3590,6 +3590,7 @@ const viewOptions = [
           v-else-if="activeFileType === 'whiteboard'"
           ref="whiteboardRef"
           :file-path="currentPath"
+          :workspace-root="openedDir"
         />
 
         <!-- 图片 / PDF / Office / 压缩包 / 其他二进制预览 -->
@@ -3780,6 +3781,7 @@ const viewOptions = [
       v-model:preview-font="previewFont"
       v-model:source-font="sourceFont"
       v-model:editor-bg="editorBg"
+      :workspace-root="openedDir"
       @open-ai-log="openAiLogFromSettings"
     />
 

@@ -86,9 +86,11 @@
             <span class="model">{{ row.model || '未知模型' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="场景" width="110">
+        <el-table-column label="场景" width="130">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ aiSceneLabel(row.scene) }}</el-tag>
+            <el-tag v-if="row.skillName" size="small" effect="plain" class="ml4">{{ row.skillName }}</el-tag>
+            <span v-if="row.step" class="dim ml4">S{{ row.step }}</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
@@ -153,6 +155,9 @@
         <el-descriptions-item label="时间">{{ formatTime(detail.time) }}</el-descriptions-item>
         <el-descriptions-item label="场景">
           <el-tag size="small" effect="plain">{{ aiSceneLabel(detail.scene) }}</el-tag>
+          <el-tag v-if="detail.skill?.name" size="small" effect="plain" class="ml4">
+            {{ detail.skill.name }}（{{ skillSourceLabel(detail.skill.source) }}）
+          </el-tag>
           <el-tag v-if="detail.stopped" size="small" type="warning" effect="plain" class="ml4">已停止</el-tag>
           <el-tag v-if="detail.fallback" size="small" type="info" effect="plain" class="ml4">降级请求</el-tag>
         </el-descriptions-item>
@@ -179,6 +184,10 @@
         <el-descriptions-item label="请求 ID">
           <span class="mono break">{{ detail.id }}</span>
         </el-descriptions-item>
+        <el-descriptions-item label="运行 ID / 步序" v-if="detail.runId">
+          <span class="mono break">{{ detail.runId }}</span>
+          <span class="dim ml4">第 {{ detail.step }} 步</span>
+        </el-descriptions-item>
       </el-descriptions>
 
       <el-tabs v-model="detailTab" class="detail-tabs">
@@ -190,7 +199,29 @@
             <el-button text size="small" @click="copyText(detail.response?.content || '')">复制</el-button>
           </div>
           <div v-if="detail.error" class="error-box">{{ detail.error }}</div>
+          <details v-if="detail.response?.thinking" class="thinking-box">
+            <summary>思考过程（{{ detail.response.thinking.length }} 字符）</summary>
+            <pre class="code-block">{{ detail.response.thinking }}</pre>
+          </details>
           <pre class="code-block">{{ detail.response?.content || '（无内容）' }}</pre>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="detail.tools?.length" :label="`工具调用（${detail.tools.length}）`" name="tools">
+          <div class="pane-toolbar">
+            <span class="dim">本步的工具调用（入参 / 结果已截断保存）</span>
+          </div>
+          <div v-for="(t, idx) in detail.tools" :key="idx" class="tool-block">
+            <div class="msg-head">
+              <el-tag size="small" :type="t.ok ? 'success' : 'danger'" effect="plain">{{ t.name }}</el-tag>
+              <span class="dim">{{ t.elapsedMs != null ? fmtDuration(t.elapsedMs) : '—' }}</span>
+              <span v-if="t.error" class="dim">{{ t.error }}</span>
+              <el-button text size="small" @click="copyText(`${t.name}\n入参：\n${t.argsSnippet}\n结果：\n${t.resultSnippet}`)">复制</el-button>
+            </div>
+            <div class="tool-io">
+              <pre class="code-block">{{ t.argsSnippet || '（无入参）' }}</pre>
+              <pre v-if="t.resultSnippet" class="code-block">{{ t.resultSnippet }}</pre>
+            </div>
+          </div>
         </el-tab-pane>
 
         <el-tab-pane :label="`请求消息（${detail.request?.messageCount || 0}）`" name="messages">
@@ -389,6 +420,14 @@ function fmtDuration(ms?: number | null): string {
   return `${(v / 1000).toFixed(2)} s`
 }
 
+/** skill 来源展示名 */
+function skillSourceLabel(source?: string): string {
+  if (source === 'builtin') return '内置'
+  if (source === 'workspace') return '工作区'
+  if (source === 'claude-compat') return '.claude'
+  return source || ''
+}
+
 /** ISO 时间 -> 本地可读时间 */
 function formatTime(iso?: string): string {
   if (!iso) return '—'
@@ -537,6 +576,43 @@ watch(visible, (v) => {
   background: var(--el-color-danger-light-9);
   border-radius: 6px;
   font-size: 13px;
+}
+
+/* 思考过程折叠块 */
+.thinking-box {
+  margin-bottom: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.thinking-box summary {
+  cursor: pointer;
+  user-select: none;
+}
+.thinking-box .code-block {
+  margin-top: 6px;
+  max-height: 200px;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* 工具调用块 */
+.tool-block {
+  margin-bottom: 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.tool-io {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-io .code-block {
+  max-height: 180px;
 }
 
 .msg-block {

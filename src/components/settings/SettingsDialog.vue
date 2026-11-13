@@ -55,6 +55,7 @@
           <PlantUmlPanel v-else-if="activeKey === 'plantuml'" ref="panelRef" />
           <AiConfigPanel v-else-if="activeKey === 'ai'" ref="panelRef" />
           <QuickAiPanel v-else-if="activeKey === 'quickai'" ref="panelRef" />
+          <SkillsPanel v-else-if="activeKey === 'skills'" ref="panelRef" :workspace-root="workspaceRoot" />
           <FileAssociationsPanel v-else-if="activeKey === 'assoc'" ref="panelRef" />
         </div>
       </section>
@@ -72,12 +73,13 @@
 <script setup lang="ts">
 import { computed, ref, watch, type Component } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Brush, Picture, Connection, MagicStick, EditPen, Link, DataLine } from '@element-plus/icons-vue'
+import { Brush, Picture, Connection, MagicStick, EditPen, Link, DataLine, Collection } from '@element-plus/icons-vue'
 import AppearancePanel from './AppearancePanel.vue'
 import ImageHostingPanel from './ImageHostingPanel.vue'
 import PlantUmlPanel from './PlantUmlPanel.vue'
 import AiConfigPanel from './AiConfigPanel.vue'
 import QuickAiPanel from './QuickAiPanel.vue'
+import SkillsPanel from './SkillsPanel.vue'
 import FileAssociationsPanel from './FileAssociationsPanel.vue'
 import { DEFAULT_PREVIEW_FONT, DEFAULT_SOURCE_FONT } from '../../utils/fonts'
 import { DEFAULT_EDITOR_BG } from '../../utils/editorBackground'
@@ -116,11 +118,14 @@ const props = withDefaults(defineProps<{
   sourceFont?: string
   /** Markdown 编辑区底色（内置浅色底色的 value） */
   editorBg?: string
+  /** 当前 workspace 根目录（技能面板按工作区扫描） */
+  workspaceRoot?: string
 }>(), {
   codeTheme: '',
   previewFont: DEFAULT_PREVIEW_FONT,
   sourceFont: DEFAULT_SOURCE_FONT,
   editorBg: DEFAULT_EDITOR_BG,
+  workspaceRoot: '',
 })
 
 const emit = defineEmits<{
@@ -176,6 +181,13 @@ const categories: SettingsCategory[] = [
     desc: '定制 AI 面板快捷类型的提示词、适用范围与结果处理方式，可新增自定义类型。',
     icon: EditPen,
     savable: true,
+  },
+  {
+    key: 'skills',
+    label: '技能（Agent）',
+    desc: 'Agent Skill 管理：工作区 .xj/skills 与内置技能的启用、导入与删除。白板「AI 画图」等能力由技能驱动。',
+    icon: Collection,
+    savable: false,
   },
   {
     key: 'assoc',

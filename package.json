@@ -16,11 +16,16 @@
     "dist:dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.115",
+    "@ai-sdk/google": "^2.0.111",
+    "@ai-sdk/openai": "^2.0.143",
+    "@ai-sdk/openai-compatible": "^1.0.63",
     "@element-plus/icons-vue": "^2.3.2",
     "@excalidraw/excalidraw": "^0.18.1",
     "@firecrawl/anydoc-wasm": "^0.2.4",
     "@open-file-viewer/core": "^0.1.42",
     "@open-file-viewer/vue": "^0.1.42",
+    "ai": "^5.0.289",
     "chart.js": "^4.5.1",
     "docx": "^9.11.0",
     "docx-preview": "^0.3.7",
@@ -35,7 +40,8 @@
     "pdfjs-dist": "^6.3.289",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "vue": "^3.5.13"
+    "vue": "^3.5.13",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
@@ -61,6 +67,12 @@
       "dist/**",
       "electron/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "skills",
+        "to": "skills"
+      }
     ],
     "fileAssociations": [
       {

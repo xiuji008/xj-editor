@@ -229,7 +229,11 @@ function estimateTokens(content) {
  * 记录一次 AI 调用
  * @param {object} entry 调用详情
  * @param {string} [entry.requestId] 请求标识
- * @param {string} [entry.scene] 业务场景：chat / polish / expand / outline / diagram / commit / test
+ * @param {string} [entry.scene] 业务场景：chat / polish / expand / outline / diagram / commit / test / skill
+ * @param {string} [entry.runId] agent 运行标识（一次 skill 运行的多个步骤共享）
+ * @param {number} [entry.step] agent 步序号（1 起）
+ * @param {object} [entry.skill] 触发的 skill { id, name, source }
+ * @param {Array<object>} [entry.tools] 本步工具调用 [{ name, ok, elapsedMs, argsChars, argsSnippet, resultChars, resultSnippet, error }]
  * @param {object} entry.provider 厂商配置 { id, name, format, baseUrl, model, temperature }
  * @param {object} [entry.request] 实际 HTTP 请求 { url, headers, body }
  * @param {Array<object>} [entry.messages] 原始对话消息（统一角色格式）
@@ -238,6 +242,7 @@ function estimateTokens(content) {
  * @param {boolean} entry.ok 是否成功
  * @param {string} [entry.error] 错误信息
  * @param {string} [entry.content] 模型输出内容
+ * @param {string} [entry.thinking] 模型思考过程（reasoning，无则空）
  * @param {object} [entry.usage] 服务端用量 { input, output, total }
  * @param {number} [entry.elapsedMs] 耗时（毫秒）
  * @param {boolean} [entry.stopped] 是否被用户中断
@@ -273,6 +278,18 @@ async function logAiCall(entry = {}) {
     params[k] = v
   }
 
+  // agent 工具调用快照：入参 / 结果截断保留
+  const toolLog = (Array.isArray(entry.tools) ? entry.tools : []).slice(0, 20).map((t) => ({
+    name: String(t?.name || ''),
+    ok: !!t?.ok,
+    elapsedMs: Number.isFinite(t?.elapsedMs) ? t.elapsedMs : null,
+    argsChars: Number(t?.argsChars) || 0,
+    argsSnippet: clipText(t?.argsSnippet || '', 2000),
+    resultChars: Number(t?.resultChars) || 0,
+    resultSnippet: clipText(t?.resultSnippet || '', 2000),
+    error: String(t?.error || ''),
+  }))
+
   const record = {
     id: String(entry.requestId || '') || `ai-${now}-${Math.random().toString(36).slice(2, 8)}`,
     month: monthOf(now),
@@ -281,6 +298,10 @@ async function logAiCall(entry = {}) {
     scene: entry.scene || 'chat',
     ok: !!entry.ok,
     error: entry.error || '',
+    // agent 运行归属：一次 skill 运行的多个步骤共享 runId，step 为步序号
+    runId: String(entry.runId || ''),
+    step: Number.isFinite(entry.step) ? entry.step : null,
+    skill: entry.skill && entry.skill.name ? { id: entry.skill.id || '', name: String(entry.skill.name), source: String(entry.skill.source || '') } : null,
     provider: {
       id: provider.id || '',
       name: provider.name || '',
@@ -303,9 +324,11 @@ async function logAiCall(entry = {}) {
       content: clipText(content, RESPONSE_TEXT_LIMIT),
       contentChars: content.length,
       truncated: content.length > RESPONSE_TEXT_LIMIT,
+      thinking: clipText(entry.thinking || '', MESSAGE_TEXT_LIMIT),
       finishReason: entry.finishReason || '',
       status: entry.status ?? null,
     },
+    tools: toolLog,
     usage: { input, output, total, estimated },
     elapsedMs: Number.isFinite(entry.elapsedMs) ? entry.elapsedMs : null,
     stopped: !!entry.stopped,
@@ -346,6 +369,12 @@ function toSummary(r) {
     error: r.error,
     stopped: r.stopped,
     fallback: r.fallback,
+    runId: r.runId || '',
+    step: r.step ?? null,
+    skillName: r.skill?.name || '',
+    skillSource: r.skill?.source || '',
+    toolCount: Array.isArray(r.tools) ? r.tools.length : 0,
+    hasThinking: !!r.response?.thinking,
     providerId: r.provider?.id || '',
     providerName: r.provider?.name || '',
     model: r.provider?.model || '',

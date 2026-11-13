@@ -179,6 +179,7 @@ export const AI_SCENE_LABELS: Record<string, string> = {
   commit: '生成提交信息',
   pdf: 'PDF 阅读笔记',
   test: '连接测试',
+  skill: '技能调用',
 }
 
 /** 取场景展示名，未知场景回退为场景值本身 */

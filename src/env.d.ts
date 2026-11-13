@@ -278,6 +278,10 @@ interface MdAPI {
   commitSpec: CommitSpecApi
   // 快捷 AI 动作（内置生成类型与提示词，可定制修改）
   quickAi: QuickAiApi
+  // Agent Skill 管理（workspace/.xj/skills + 内置）
+  skills: SkillsApi
+  // Agent 运行（skill 执行，多步工具调用）
+  agent: AgentApi
   // 进程管理（按端口 / 服务名查询进程并结束）
   process: ProcessApi
 }
@@ -797,6 +801,8 @@ interface AiProvider {
   temperature: number
   builtin?: boolean
   custom?: boolean
+  /** 是否启用工具调用（skill 执行要求支持；默认 true） */
+  toolSupport?: boolean
 }
 
 /** AI 整体配置 */
@@ -905,7 +911,7 @@ interface AiChatsApi {
 }
 
 /** AI 调用场景（用于调用日志归类） */
-type AiLogScene = 'chat' | 'polish' | 'expand' | 'outline' | 'diagram' | 'commit' | 'quick' | 'test' | 'pdf'
+type AiLogScene = 'chat' | 'polish' | 'expand' | 'outline' | 'diagram' | 'commit' | 'quick' | 'test' | 'pdf' | 'skill'
 
 /** 调用日志月份条目 */
 interface AiLogMonth {
@@ -962,6 +968,18 @@ interface AiLogSummary {
   elapsedMs: number | null
   /** 响应内容预览 */
   preview: string
+  /** agent 运行标识（一次 skill 运行的多步共享；普通调用为空） */
+  runId: string
+  /** agent 步序号（1 起；普通调用为 null） */
+  step: number | null
+  /** 触发的 skill 名称（非 skill 场景为空） */
+  skillName: string
+  /** skill 来源：builtin / workspace / claude-compat */
+  skillSource: string
+  /** 本步工具调用数量 */
+  toolCount: number
+  /** 是否包含思考过程 */
+  hasThinking: boolean
 }
 
 /** 调用日志统计 */
@@ -1040,9 +1058,28 @@ interface AiLogRecord {
     content: string
     contentChars: number
     truncated: boolean
+    /** 模型思考过程（reasoning，无则空） */
+    thinking: string
     finishReason: string
     status: number | null
   }
+  /** 本步工具调用（agent 运行专用，普通调用为空数组） */
+  tools: Array<{
+    name: string
+    ok: boolean
+    elapsedMs: number | null
+    argsChars: number
+    argsSnippet: string
+    resultChars: number
+    resultSnippet: string
+    error: string
+  }>
+  /** agent 运行标识（普通调用为空） */
+  runId: string
+  /** agent 步序号（普通调用为 null） */
+  step: number | null
+  /** 触发的 skill（普通调用为 null） */
+  skill: { id: string; name: string; source: string } | null
   usage: { input: number; output: number; total: number; estimated: boolean }
   elapsedMs: number | null
   stopped: boolean
@@ -1052,6 +1089,111 @@ interface AiLogRecord {
 
 /** 提交规范预设：full 完整版 / brief 精简版 */
 type CommitSpecPreset = 'full' | 'brief'
+
+/* ==================== Agent Skill ==================== */
+
+/** skill 来源：builtin 内置（只读）/ workspace 当前工作区（可写）/ claude-compat 兼容识别（只读） */
+type SkillSource = 'builtin' | 'workspace' | 'claude-compat'
+
+/** skill 元数据 */
+interface SkillMeta {
+  /** 唯一标识（source::目录名） */
+  id: string
+  /** 展示名称（frontmatter.name，缺省为目录名） */
+  name: string
+  /** 用途描述（frontmatter.description，路由的唯一依据） */
+  description: string
+  version: string
+  /** 允许调用的工具名列表（frontmatter.allowed-tools） */
+  allowedTools: string[]
+  /** 适用目标场景（frontmatter.targets，如 whiteboard） */
+  targets: string[]
+  source: SkillSource
+  /** skill 包根目录绝对路径 */
+  rootPath: string
+  /** 是否包含 scripts/（P0 不执行） */
+  hasScripts: boolean
+  /** references/ 下的 .md 资源清单 */
+  resources: string[]
+  enabled: boolean
+}
+
+interface SkillsListResult {
+  ok: boolean
+  workspaceRoot: string
+  builtinDir: string
+  builtin: SkillMeta[]
+  workspace: SkillMeta[]
+  claudeCompat: SkillMeta[]
+}
+
+interface SkillGetResult {
+  ok: boolean
+  meta?: { id: string; name: string; description: string; version: string; rootPath: string }
+  /** SKILL.md 正文（去 frontmatter） */
+  body?: string
+  error?: string
+}
+
+interface SkillsApi {
+  /** 列出 skill（workspace 覆盖内置同名） */
+  list: (workspaceRoot: string) => Promise<SkillsListResult>
+  /** 读取 skill 详情（meta + body） */
+  get: (payload: { rootPath: string }) => Promise<SkillGetResult>
+  /** 读取 skill 的 references/ 资源（路径白名单） */
+  readResource: (payload: { rootPath: string; relPath: string }) => Promise<{ ok: boolean; content?: string; relPath?: string; error?: string }>
+  /** 导入 skill 到 <workspace>/.xj/skills/（needConfirm 表示同名待覆盖） */
+  import: (payload: { workspaceRoot: string; fromPath: string; overwrite?: boolean }) => Promise<{ ok: boolean; needConfirm?: boolean; rootPath?: string; name?: string; error?: string }>
+  /** 删除 workspace skill（仅限 .xj/skills 内） */
+  remove: (payload: { rootPath: string }) => Promise<{ ok: boolean; error?: string }>
+  /** 启用/停用 skill */
+  setEnabled: (payload: { rootPath: string; enabled: boolean }) => Promise<{ ok: boolean; error?: string }>
+  /** 在系统文件管理器中打开 skill 目录 */
+  reveal: (payload: { rootPath: string }) => Promise<{ ok: boolean; error?: string }>
+}
+
+/** agent 事件（agent:event 推送） */
+type AgentEvent =
+  | { runId: string; type: 'text-delta'; delta: string }
+  | { runId: string; type: 'reasoning-delta'; delta: string }
+  | { runId: string; type: 'tool-start'; name: string }
+  | { runId: string; type: 'tool-result'; name: string }
+  | { runId: string; type: 'done'; text: string; stopped?: boolean }
+  | { runId: string; type: 'error'; error: string }
+
+/** 渲染进程工具执行请求（agent:tool-call 推送） */
+interface AgentToolCall {
+  runId: string
+  callId: string
+  name: string
+  args: Record<string, unknown>
+}
+
+interface AgentApi {
+  /**
+   * 运行一次 agent（立即返回；事件经 onEvent 推送，工具调用经 onToolCall 反向下发）
+   * @param payload 运行参数：provider 厂商配置、system 提示词（skill body + 契约）、messages、toolNames、skill（日志归属）
+   */
+  run: (payload: {
+    runId: string
+    provider: AiProvider
+    system: string
+    messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
+    toolNames: string[]
+    skill?: { id: string; name: string; source: string }
+    skillRoot?: string
+    maxSteps?: number
+    temperature?: number
+  }) => Promise<{ ok: boolean; runId?: string; error?: string }>
+  /** 中断运行 */
+  stop: (runId: string) => Promise<{ ok: boolean; error?: string }>
+  /** 回传渲染进程工具执行结果（对应 AgentToolCall.callId） */
+  toolResult: (payload: { runId: string; callId: string; ok: boolean; data?: unknown; error?: string }) => void
+  /** 订阅 agent 运行事件，返回取消订阅函数 */
+  onEvent: (callback: (event: AgentEvent) => void) => () => void
+  /** 订阅工具调用请求，返回取消订阅函数 */
+  onToolCall: (callback: (call: AgentToolCall) => void) => () => void
+}
 
 /** Git 提交规范配置（内置默认，可在页面编辑） */
 interface CommitSpecConfig {

@@ -467,6 +467,8 @@ function createWindow(options = {}) {
     terminal.killByOwner(id)
     // 只回收本窗口的脚本运行会话，不影响其它窗口
     scriptRunner.killByOwner(id)
+    // 中断本窗口发起的 agent 运行（skill 执行），不影响其它窗口
+    if (agentRunner) agentRunner.disposeSender(win.webContents)
     // 摘除本窗口后重新记录会话；退出阶段不重写，否则窗口逐个关闭会把会话缩减成只剩一个
     if (!isQuitting && !quitPending) flushWorkspace()
     // 退出流程中：继续询问下一个仍有未保存修改的窗口
@@ -632,6 +634,13 @@ if (!app.requestSingleInstanceLock()) {
     // AI 调用日志：按月写入应用数据目录下的 ai-logs
     aiLogger.initAiLogger(app.getPath('userData'))
     aiChats.setChatsPath(aiChatsPath())
+    // Agent Skill：内置目录（dev 用项目 skills/，打包用 resources/skills）+ 启用状态文件
+    skillsMod.initSkillsBuiltinDir(
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'skills')
+        : path.join(app.getAppPath(), 'skills'),
+    )
+    skillsMod.initSkillsState(app.getPath('userData'))
     // 启动参数携带的文件（双击关联文件 / 拖拽到快捷方式）：先入队，首个窗口挂载后主动拉取
     deliverOpenFiles(extractFilePaths(process.argv))
     // 优先按上次会话重建多个窗口，失败（首次启动 / 无记录）时只建一个窗口
@@ -2194,6 +2203,30 @@ ipcMain.handle('fileassoc:status', () => fileassoc.status())
 const ai = require('./ai.cjs')
 const aiLogger = require('./aiLogger.cjs')
 const aiChats = require('./aiChats.cjs')
+/* ==================== Agent Skill（workspace/.xj/skills + 内置） ==================== */
+const skillsMod = require('./skills.cjs')
+const agentRunner = require('./agent.cjs')
+
+// 读取 skill 列表（顺带记录 workspace 根，供 getSkill / remove 等接口校验归属）
+ipcMain.handle('skills:list', (_event, payload) => {
+  skillsMod.setLastWorkspaceRoot(payload?.workspaceRoot || '')
+  return skillsMod.listSkills(payload)
+})
+ipcMain.handle('skills:get', (_event, payload) => skillsMod.getSkill(payload))
+ipcMain.handle('skills:readResource', (_event, payload) => skillsMod.readSkillResource(payload))
+ipcMain.handle('skills:import', (_event, payload) => skillsMod.importSkill(payload))
+ipcMain.handle('skills:remove', (_event, payload) => skillsMod.removeSkill(payload))
+ipcMain.handle('skills:setEnabled', (_event, payload) => skillsMod.setSkillEnabled(payload))
+ipcMain.handle('skills:reveal', async (_event, payload) => {
+  try {
+    const res = await shell.openPath(String(payload?.rootPath || ''))
+    return { ok: !res, error: res || '' }
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) }
+  }
+})
+// agent 运行：streamText 多步工具调用，事件经 agent:event 推回发起窗口
+agentRunner.registerAgentIpc(ipcMain)
 
 const aiConfigPath = () => path.join(app.getPath('userData'), 'ai-config.json')
 /** AI 对话会话持久化路径（多会话：新建对话 / 历史对话，主窗口与独立对话窗口共享） */

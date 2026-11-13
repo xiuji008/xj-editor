@@ -77,6 +77,12 @@
         <el-form-item label="温度">
           <el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" show-input />
         </el-form-item>
+        <el-form-item label="工具调用">
+          <el-switch v-model="form.toolSupport" />
+          <span class="tool-support-hint">
+            关闭后该厂商不参与 skill 执行（模型不支持 function calling 时使用）
+          </span>
+        </el-form-item>
       </el-form>
 
       <div class="form-actions">
@@ -114,6 +120,7 @@ const form = reactive<AiProvider>({
   apiKey: '',
   model: '',
   temperature: 0.7,
+  toolSupport: true,
 })
 
 /** 载入时的配置快照，用于判断是否存在未保存的修改 */
@@ -159,6 +166,7 @@ function applyForm(id: string) {
     apiKey: p.apiKey || '',
     model: p.model || '',
     temperature: p.temperature ?? 0.7,
+    toolSupport: p.toolSupport !== false,
   })
 }
 
@@ -179,6 +187,7 @@ function addCustom() {
     apiKey: '',
     model: '',
     temperature: 0.7,
+    toolSupport: true,
     builtin: false,
     custom: true,
   })
@@ -308,6 +317,12 @@ defineExpose({ load, save, isDirty })
 </script>
 
 <style scoped>
+.tool-support-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .ai-config {
   display: flex;
   gap: 16px;

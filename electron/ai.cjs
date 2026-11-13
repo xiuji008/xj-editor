@@ -88,6 +88,8 @@ async function saveAiConfig(configPath, config) {
       apiKey: p.apiKey || '',
       model: p.model,
       temperature: p.temperature ?? 0.7,
+      // 工具调用开关（skill 执行要求支持；未设置视为开启）
+      toolSupport: p.toolSupport !== false,
       custom: !!p.custom,
     })),
   }

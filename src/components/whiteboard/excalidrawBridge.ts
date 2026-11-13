@@ -32,6 +32,10 @@ export interface ExcalidrawProps {
 export interface ExcalidrawApiLike {
   getAppState(): Record<string, unknown> & { zoom?: { value?: number } }
   scrollToContent(target: unknown, opts?: Record<string, unknown>): void
+  /** 当前场景元素快照（agent 工具 whiteboard_get_scene 用） */
+  getSceneElements(): readonly unknown[]
+  /** 更新场景（agent 生成内容写回画布用） */
+  updateScene(scene: { elements?: readonly unknown[]; appState?: Record<string, unknown> }): void
 }
 
 /** 动态加载的 Excalidraw 模块鸭子类型（本应用用到的导出） */
@@ -46,6 +50,11 @@ export interface ExcalidrawModule {
     type: 'local' | 'publication',
   ) => string
   restore: (data: unknown, localAppState?: unknown, localElements?: unknown) => unknown
+  /** skeleton → 完整 element（自动处理 text 绑定 / 箭头绑定 / seed 等） */
+  convertToExcalidrawElements: (
+    skeletons: unknown,
+    opts?: { regenerateIds?: boolean },
+  ) => unknown[]
 }
 
 let modulePromise: Promise<ExcalidrawModule> | null = null
