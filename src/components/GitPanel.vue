@@ -126,9 +126,11 @@ const pullTip = computed(() =>
 )
 
 /** 推送按钮提示 */
-const pushTip = computed(() =>
-  status.value?.detached ? '游离 HEAD，无法同步' : `推送（领先 ${status.value?.ahead ?? 0} 个提交）`,
-)
+const pushTip = computed(() => {
+  if (status.value?.detached) return '游离 HEAD，无法同步'
+  if (status.value?.upstreamGone) return '推送（远程仓库还没有该分支，推送时自动创建）'
+  return `推送（领先 ${status.value?.ahead ?? 0} 个提交）`
+})
 
 /** 变更总数 */
 const totalChanges = computed(() => {
@@ -466,15 +468,19 @@ async function doPull() {
   }
 }
 
-/** 推送本地提交；无上游分支时先询问是否设置上游 */
+/** 推送本地提交；无上游或上游已失效（远端没有该分支）时先确认，随后自动创建远程分支并设置上游 */
 async function doPush() {
   if (!props.repoRoot || syncAction.value || !window.mdAPI) return
   let setUpstream = false
-  if (!status.value?.upstream) {
+  const upstreamGone = !!status.value?.upstreamGone
+  if (!status.value?.upstream || upstreamGone) {
+    const tip = upstreamGone
+      ? `远程仓库中还没有「${status.value?.upstream}」分支，推送时会自动创建远程分支并设置上游，是否继续？`
+      : '当前分支还没有上游分支，是否设置上游并推送？'
     try {
-      await ElMessageBox.confirm('当前分支还没有上游分支，是否设置上游并推送？', '推送', {
+      await ElMessageBox.confirm(tip, '推送', {
         type: 'warning',
-        confirmButtonText: '设置上游并推送',
+        confirmButtonText: upstreamGone ? '创建分支并推送' : '设置上游并推送',
         cancelButtonText: '取消',
       })
     } catch {
@@ -490,7 +496,14 @@ async function doPush() {
       setUpstream,
     })
     if (!handleResult(res, '推送失败')) return
-    ElMessage.success(/everything up-to-date/i.test(res?.summary || '') ? '已是最新，无需推送' : '已推送')
+    const summary = res?.summary || ''
+    if (/everything up-to-date/i.test(summary)) {
+      ElMessage.success('已是最新，无需推送')
+    } else if (/new branch/i.test(summary)) {
+      ElMessage.success('已推送，并在远程创建了分支')
+    } else {
+      ElMessage.success('已推送')
+    }
     await refresh()
     emit('repo-changed')
   } finally {

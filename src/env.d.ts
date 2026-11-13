@@ -194,6 +194,8 @@ interface MdAPI {
   openUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
   // 系统剪贴板 / 系统拖拽（可复制到桌面等系统位置）
   writeFilesToClipboard: (paths: string[]) => Promise<{ ok: boolean; count?: number; error?: string }>
+  /** 读取系统剪贴板中复制的文件 / 文件夹路径（资源管理器 Ctrl+C 后粘贴进目录树） */
+  readFilesFromClipboard: () => Promise<{ ok: boolean; paths: string[]; error?: string }>
   /** 富文本复制：主进程直写 text/html + text/plain（桌面端富文本复制主路径） */
   writeRichHtml: (html: string, text: string) => Promise<{ ok: boolean; error?: string }>
   startFileDrag: (paths: string[]) => void
@@ -551,6 +553,8 @@ interface GitStatus {
   branch: string
   /** 上游分支名，无上游时为空 */
   upstream: string
+  /** 上游是否已失效（配置了上游但远端还没有该分支，如空仓库首推） */
+  upstreamGone: boolean
   /** 领先上游的提交数 */
   ahead: number
   /** 落后上游的提交数 */

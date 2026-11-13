@@ -3,6 +3,14 @@
 > 每次修改记录一行：二级标题日期    内容：改了啥 。
 
 
+## 2026-11-13
+
+-   Git 面板推送支持「远端仓库还没有该分支」场景（空仓库首推不再卡壳）：此前仅识别「从未设置上游」（status.upstream 为空）才提示设置上游，而 clone 后远端只有空项目、没建分支时 status 显示 origin/master [gone]（upstream 非空），推送既不带 --set-upstream 也没有任何提示。改动：主进程 git.cjs parseBranchLine 解析 status -b 分支行 [gone] 标记、readBranchInfo 在 rev-parse @{u} 失败但 branch.<name>.merge 配置存在时判定上游失效，status 返回体新增 upstreamGone；push() 新增 isUpstreamGone 检测，上游失效时自动补 --set-upstream 重建本地↔远端跟踪关系（显式 remote+refspec 本身就会在远端建分支），并新增游离 HEAD 守卫（refspec=HEAD 时拒绝推送，避免在远端创建名为 HEAD 的分支）；GitPanel.vue doPush 判定条件改为 !upstream || upstreamGone，确认弹窗文案区分两种情况（「远程仓库中还没有该分支，推送时自动创建远程分支并设置上游」），成功提示区分「已推送并在远程创建了分支」，推送按钮 tooltip 同步提示。env.d.ts GitStatus 补 upstreamGone 字段
+
+-   修复「资源管理器 Ctrl+C 复制文件/文件夹后，在目录树选中目录按 Ctrl+V 无反应」：原粘贴只消费应用内剪贴板 clipNode（目录树内复制才有值），外部复制的文件路径完全没读取。新增主进程 readFilesFromClipboard（Windows 读 clipboard.readBuffer('FileNameW')（CF_HDROP 的 UTF-16 视图）按 \0 拆分、macOS 读 NSFilenamesPboardType plist 提取 string、Linux 读 gnome-copied-files / uri-list 解析 file:// URL，统一 normalizeExistingPaths 过滤有效路径）+ IPC clipboard:readFiles + preload mdAPI.readFilesFromClipboard；App.vue pasteTreeFile 改为应用内剪贴板优先、为空时回读系统剪贴板（支持多个文件逐个 copyPath 粘贴），Ctrl+V 分支去掉 clipNode 空值守卫
+
+-   修复 HTML 预览相对路径图片/资源全部失效问题（如 `<img src="images/side.png">` 不显示）。两个根因都在 HtmlEditor 的 `<base>` 注入逻辑：① toFileUrl 在 Windows 下生成 file:////D:/xj/site（4 个斜杠，会被当 UNC 路径）且目录基准缺结尾斜杠（相对路径会丢最后一段目录，层级越深偏得越多），现统一生成 file:///D:/xj/site/ 并对 # ? 做转义；② 完整 HTML 文档（带 DOCTYPE/html 标签）原来原样返回不注入 base，现会向 head（无 head 则 html 标签后、再兜底文档开头）注入 base href，文档自带 base 或无文件目录时不注入。Node WHATWG URL 实测多层级目录下 images/xxx、../xxx、css/xxx 均解析到正确绝对路径
+
 ## 2026-11-12
 
 -   富文本复制改为单通道语义（对齐 markdown-nice）：剪贴板里就是 HTML 本身——text/html 与 text/plain 均放 HTML 字符串，不再放 Markdown 源码。粘到公众号/知乎/掘金得到排版，粘到 txt/记事本得到 HTML 源文本，任何目标都不会再出现 Markdown 源码；copyRichHtml 签名收敛为 (html)，最坏兜底（只能写纯文本）也写 HTML 源文本

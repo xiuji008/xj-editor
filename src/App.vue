@@ -2883,11 +2883,22 @@ function copyTreeFile() {
   copyTreeNode(treeRef.value?.getCurrentNode() as TreeNode | null)
 }
 
-/** Ctrl+V：将剪贴板中的文件 / 文件夹粘贴到目标目录，并静默刷新目录树 */
+/** Ctrl+V：将剪贴板中的文件 / 文件夹粘贴到目标目录，并静默刷新目录树。
+ * 应用内剪贴板（目录树 Ctrl+C）优先；为空时回读系统剪贴板中复制的文件 / 文件夹（资源管理器 Ctrl+C） */
 async function pasteTreeFile() {
   if (!window.mdAPI) return
-  const clip = clipNode.value
-  if (!clip) return
+  let srcPaths: string[] = []
+  if (clipNode.value) {
+    srcPaths = [clipNode.value.path]
+  } else {
+    try {
+      const sysRes = await window.mdAPI.readFilesFromClipboard()
+      if (sysRes?.ok && sysRes.paths?.length) srcPaths = sysRes.paths
+    } catch {
+      /* 系统剪贴板无文件或读取失败：静默返回 */
+    }
+  }
+  if (!srcPaths.length) return
   // 目标目录：当前选中的目录 → 当前选中文件所在目录 → 当前打开文件所在目录 → 根目录
   let destDir = ''
   const node = treeRef.value?.getCurrentNode() as TreeNode | null
@@ -2895,21 +2906,25 @@ async function pasteTreeFile() {
   if (!destDir) destDir = currentPath.value ? dirname(currentPath.value) : ''
   if (!destDir) destDir = openedDir.value
   if (!destDir) return
-  if (destDir === clip.path) {
+  if (srcPaths.includes(destDir)) {
     ElMessage.info('不能粘贴到自身')
     return
   }
-  try {
-    const res = await window.mdAPI.copyPath({ srcPath: clip.path, destDir })
-    if (res?.ok) {
-      refreshTreeDir(destDir)
-      ElMessage.success(`已粘贴 ${res.name}`)
-    } else {
-      ElMessage.error(`复制失败：${res?.error || '未知错误'}`)
+  let failMsg = ''
+  for (const srcPath of srcPaths) {
+    try {
+      const res = await window.mdAPI.copyPath({ srcPath, destDir })
+      if (res?.ok) {
+        refreshTreeDir(destDir)
+        ElMessage.success(`已粘贴 ${res.name}`)
+      } else {
+        failMsg = res?.error || '未知错误'
+      }
+    } catch (err) {
+      failMsg = err instanceof Error ? err.message : String(err)
     }
-  } catch (err) {
-    ElMessage.error(`复制失败：${err instanceof Error ? err.message : String(err)}`)
   }
+  if (failMsg) ElMessage.error(`复制失败：${failMsg}`)
 }
 
 /* ========== 终端（命令行） ========== */
@@ -3053,7 +3068,6 @@ function onKeydown(e: KeyboardEvent) {
     copyTreeFile()
   } else if (key === 'v' && !e.shiftKey) {
     if (isEditableTarget(e.target)) return
-    if (!clipNode.value) return
     e.preventDefault()
     pasteTreeFile()
   }

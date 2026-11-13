@@ -310,14 +310,16 @@ function enqueueWrite(repoRoot, task) {
 /**
  * 解析 `git status -b` 的分支头行，如 `## main...origin/main [ahead 2, behind 1]`
  * @param {string} line 分支头行
- * @returns {{ branch: string, upstream: string, ahead: number, behind: number, detached: boolean }} 分支信息
+ * @returns {{ branch: string, upstream: string, ahead: number, behind: number, detached: boolean, upstreamGone: boolean }} 分支信息
  */
 function parseBranchLine(line) {
   let text = String(line || '').replace(/^##\s+/, '')
   let ahead = 0
   let behind = 0
+  let upstreamGone = false
   const bracket = text.match(/\[([^\]]*)\]/)
   if (bracket) {
+    upstreamGone = /\bgone\b/i.test(bracket[1])
     text = text.slice(0, bracket.index).trim()
     for (const part of bracket[1].split(',')) {
       const m = part.trim().match(/^(ahead|behind)\s+(\d+)$/)
@@ -337,13 +339,13 @@ function parseBranchLine(line) {
   branch = branch.replace(/^No commits yet on\s+/, '').trim()
   if (!branch) branch = 'HEAD'
   if (detached) branch = 'HEAD'
-  return { branch, upstream, ahead, behind, detached }
+  return { branch, upstream, ahead, behind, detached, upstreamGone }
 }
 
 /**
  * 在 -b 分支行缺失时，通过 rev-parse 单独读取分支与上游信息
  * @param {string} repoRoot 仓库根目录
- * @returns {Promise<{ branch: string, upstream: string, ahead: number, behind: number, detached: boolean }>} 分支信息
+ * @returns {Promise<{ branch: string, upstream: string, ahead: number, behind: number, detached: boolean, upstreamGone: boolean }>} 分支信息
  */
 async function readBranchInfo(repoRoot) {
   const branchRes = await run(['symbolic-ref', '--short', 'HEAD'], repoRoot, { timeout: 8000 })
@@ -356,6 +358,7 @@ async function readBranchInfo(repoRoot) {
   let upstream = ''
   let ahead = 0
   let behind = 0
+  let upstreamGone = false
   const upRes = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], repoRoot, { timeout: 8000 })
   if (upRes.ok && upRes.stdout.trim()) {
     upstream = upRes.stdout.trim()
@@ -365,8 +368,13 @@ async function readBranchInfo(repoRoot) {
       behind = Number(nums[0]) || 0
       ahead = Number(nums[1]) || 0
     }
+  } else if (!detached && branch) {
+    // @{u} 解析失败：若分支配置了上游（branch.<name>.merge）但远程引用不存在，
+    // 说明远端仓库还没有该分支（常见于推送到空仓库 / fetch --prune 之后）
+    const cfgRes = await run(['config', `branch.${branch}.merge`], repoRoot, { timeout: 8000 })
+    upstreamGone = cfgRes.ok && !!cfgRes.stdout.trim()
   }
-  return { branch, upstream, ahead, behind, detached }
+  return { branch, upstream, ahead, behind, detached, upstreamGone }
 }
 
 /**
@@ -504,6 +512,7 @@ async function status(repoRoot) {
       repoRoot,
       branch: branchInfo.branch,
       upstream: branchInfo.upstream,
+      upstreamGone: !!branchInfo.upstreamGone,
       ahead: branchInfo.ahead,
       behind: branchInfo.behind,
       detached: branchInfo.detached,
@@ -1094,6 +1103,22 @@ async function pull(repoRoot, options = {}) {
 }
 
 /**
+ * 判断当前分支的上游是否「已失效」：配置了上游（branch.<name>.merge），
+ * 但对应远程引用不存在——即远端仓库还没有该分支（空仓库首推）或被 fetch --prune 清理。
+ * @param {string} repoRoot 仓库根目录
+ * @returns {Promise<boolean>} 上游失效返回 true
+ */
+async function isUpstreamGone(repoRoot) {
+  const branchRes = await run(['symbolic-ref', '--short', 'HEAD'], repoRoot, { timeout: 8000 })
+  const branch = branchRes.ok ? String(branchRes.stdout || '').trim() : ''
+  if (!branch) return false
+  const cfgRes = await run(['config', `branch.${branch}.merge`], repoRoot, { timeout: 8000 })
+  if (!cfgRes.ok || !String(cfgRes.stdout || '').trim()) return false
+  const upRes = await run(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], repoRoot, { timeout: 8000 })
+  return !upRes.ok
+}
+
+/**
  * 推送（git push，可设置上游）
  * @param {string} repoRoot 仓库根目录
  * @param {{ remote?: string, branch?: string, setUpstream?: boolean, forceWithLease?: boolean }} options 选项
@@ -1112,9 +1137,20 @@ async function push(repoRoot, options = {}) {
         message: '推送失败：当前仓库没有配置远程仓库，请先添加远程（git remote add origin <仓库地址>）',
       }
     }
+    // 游离 HEAD 时 refspec 会被规范为 HEAD，直接推会在远端创建名为 HEAD 的分支
+    if (refspec === 'HEAD') {
+      return {
+        ok: false,
+        error: 'DETACHED',
+        message: '推送失败：当前处于游离 HEAD，请先在分支管理中新建分支后再推送',
+      }
+    }
+    // 上游已失效时自动补 --set-upstream：显式 remote+refspec 本身就会在远端创建分支，
+    // 这里额外修复本地的跟踪关系，避免一直停留在 "upstream is gone" 状态
+    const setUpstream = !!options.setUpstream || (await isUpstreamGone(repoRoot))
     const args = [
       'push',
-      ...(options.setUpstream ? ['--set-upstream'] : []),
+      ...(setUpstream ? ['--set-upstream'] : []),
       ...(options.forceWithLease ? ['--force-with-lease'] : []),
       remote,
       ...(refspec ? [refspec] : []),

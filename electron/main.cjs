@@ -3,7 +3,7 @@ const { spawnSync } = require('child_process')
 const fs = require('fs')
 const fsp = fs.promises
 const path = require('path')
-const { pathToFileURL } = require('url')
+const { pathToFileURL, fileURLToPath } = require('url')
 const fileassoc = require('./fileassoc.cjs')
 const docConvert = require('./docConvert.cjs')
 const terminal = require('./terminal.cjs')
@@ -1929,6 +1929,49 @@ function writeFilesToClipboard(paths) {
 // 复制文件 / 文件夹到系统剪贴板：可在桌面或任意文件夹按 Ctrl+V 粘贴
 ipcMain.handle('clipboard:writeFiles', (_event, payload) => {
   return writeFilesToClipboard(payload?.paths)
+})
+
+/**
+ * 读取系统剪贴板中复制的文件 / 文件夹路径（资源管理器 Ctrl+C 后粘贴进目录树）。
+ * Windows 读 CF_HDROP（'FileNameW'），macOS 读 NSFilenamesPboardType，Linux 读 gnome / uri-list。
+ * @returns {{ ok: boolean, paths: string[], error?: string }}
+ */
+function readFilesFromClipboard() {
+  try {
+    let paths = []
+    if (process.platform === 'win32') {
+      // CF_HDROP 的 UTF-16 编码视图：路径以 \0 分隔（Electron 公共 API 未开放，走私有格式名）
+      const raw = clipboard.readBuffer('FileNameW').toString('ucs2')
+      paths = raw.split('\0').map((p) => p.trim()).filter(Boolean)
+    } else if (process.platform === 'darwin') {
+      const xml = clipboard.readBuffer('NSFilenamesPboardType').toString('utf8')
+      paths = [...xml.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => m[1])
+    } else {
+      const gnome = clipboard.readBuffer('x-special/gnome-copied-files').toString('utf8')
+      const uriText = gnome || clipboard.readBuffer('text/uri-list').toString('utf8')
+      paths = uriText
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line && line !== 'copy' && line !== 'cut')
+        .map((line) => {
+          try {
+            return line.startsWith('file://') ? fileURLToPath(line) : line
+          } catch {
+            return ''
+          }
+        })
+        .filter(Boolean)
+    }
+    const valid = normalizeExistingPaths(paths)
+    return { ok: true, paths: valid }
+  } catch (err) {
+    return { ok: false, paths: [], error: err.message }
+  }
+}
+
+// 读取系统剪贴板中的文件 / 文件夹路径列表（目录树 Ctrl+V 粘贴外部复制内容用）
+ipcMain.handle('clipboard:readFiles', () => {
+  return readFilesFromClipboard()
 })
 
 // HTML → 纯文本（主进程无 DOM，用正则剥标签），用于富文本剪贴板的 text/plain 兜底

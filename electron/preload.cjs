@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld('mdAPI', {
   openUrl: (url) => ipcRenderer.invoke('shell:openUrl', { url }),
   // 系统剪贴板 / 系统拖拽（复制文件到桌面等系统位置）
   writeFilesToClipboard: (paths) => ipcRenderer.invoke('clipboard:writeFiles', { paths }),
+  // 读取系统剪贴板中复制的文件 / 文件夹路径（资源管理器 Ctrl+C 后粘贴进目录树）
+  readFilesFromClipboard: () => ipcRenderer.invoke('clipboard:readFiles'),
   // 富文本复制：主进程直写 text/html + text/plain（桌面端富文本复制的主路径）
   writeRichHtml: (html, text) => ipcRenderer.invoke('clipboard:writeRich', { html, text }),
   startFileDrag: (paths) => ipcRenderer.send('drag:startFiles', { paths }),

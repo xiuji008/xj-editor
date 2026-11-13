@@ -247,20 +247,39 @@ function onIframeWheel(e: WheelEvent) {
 /** 内容是否为完整 HTML 文档（包含 doctype 或 html 根标签） */
 const isFullDocument = (content: string) => /<!doctype\s+html/i.test(content) || /<html[\s>]/i.test(content)
 
-/** 将本地目录转换为 file:// URL（用于 <base> 标签解析相对路径资源） */
+/**
+ * 将本地目录转换为 file:// URL（用于 <base> 标签解析相对路径资源）。
+ *
+ * 两个关键点（出错会让预览里的相对路径图片全部失效）：
+ * 1. Windows 盘符路径不再额外补前导斜杠：必须生成 file:///D:/xj/site（3 个斜杠），
+ *    之前的 file:////D:/xj/site（4 个斜杠）会被当作 UNC 路径，资源加载失败；
+ * 2. 目录基准必须以 / 结尾：file:///D:/xj/site + images/side.png 会解析成
+ *    file:///D:/xj/images/side.png（丢了 site 这一段目录），层级越深偏得越多。
+ */
 const toFileUrl = (dir: string): string => {
-  const normalized = dir.replace(/\\/g, '/')
-  return 'file:///' + encodeURI(normalized.startsWith('/') ? normalized : `/${normalized}`)
+  const normalized = encodeURI(dir.replace(/\\/g, '/').replace(/^\/+/, ''))
+    .replace(/#/g, '%23')
+    .replace(/\?/g, '%3F')
+  return 'file:///' + (normalized.endsWith('/') ? normalized : normalized + '/')
 }
 
-/** 预览文档：片段自动包裹为完整文档，并注入 <base> 解析本地相对资源 */
+/** 生成 <base> 标签（文件所在目录存在时），用于解析预览中的相对路径资源 */
+const buildBaseTag = (): string => (props.baseDir ? `<base href="${toFileUrl(props.baseDir)}">` : '')
+
+/** 预览文档：片段自动包裹为完整文档；完整文档也需注入 <base>（已自带 base 则跳过） */
 const previewDoc = computed(() => {
   const content = props.modelValue
   if (!content.trim()) {
     return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;color:#999;text-align:center;padding:40px 0">暂无内容</body></html>'
   }
-  if (isFullDocument(content)) return content
-  const base = props.baseDir ? `<base href="${toFileUrl(props.baseDir)}">` : ''
+  const base = buildBaseTag()
+  if (isFullDocument(content)) {
+    // 文档自带 <base> 或无基准目录时不注入
+    if (!base || /<base[\s>]/i.test(content)) return content
+    if (/<head[^>]*>/i.test(content)) return content.replace(/<head[^>]*>/i, (m) => `${m}${base}`)
+    if (/<html[^>]*>/i.test(content)) return content.replace(/<html[^>]*>/i, (m) => `${m}${base}`)
+    return `${base}${content}`
+  }
   return `<!DOCTYPE html>\n<html><head><meta charset="utf-8">${base}</head>\n<body>${content}</body></html>`
 })
 
